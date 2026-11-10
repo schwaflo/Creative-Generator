@@ -342,8 +342,10 @@ CG.aiPage = (() => {
       R.runTitle.textContent = 'Generator';
       const promptText = R.prompt.value;
       let reqLi = null, stepLi = null;
+      let revLi = null;
       const res = await AI().pipeline.generate(promptText, {
         signal, aspect: CG.state.format.w / CG.state.format.h,
+        reference: S.image ? S.image.base64 : null, analysis: S.analysis,
         onEvent: ev => {
           if (ev.type === 'models' && AI().settings.api() === 'ollama') logItem(`Speicher: nur ${AI().config.codeModel} bleibt geladen`, 'ok');
           if (ev.type === 'request') { reqLi = logItem(ev.attempt ? `Reparatur ${ev.attempt}/${ev.tries - 1} …` : `Code wird geschrieben (${AI().config.codeModel}) …`, 'act'); stepLi = null; meta(''); }
@@ -351,6 +353,15 @@ CG.aiPage = (() => {
           if (ev.type === 'validate') { setLi(reqLi, reqLi.textContent.replace(' …', ''), 'ok'); stepLi = logItem('Prüfung …', 'act'); }
           if (ev.type === 'step' && stepLi) setLi(stepLi, `Prüfung: ${ev.step} …`, 'act');
           if (ev.type === 'ok' && stepLi) setLi(stepLi, 'Prüfung bestanden', 'ok');
+          if (ev.type === 'review') { revLi = logItem(`Bildvergleich mit der Referenz (${AI().config.visionModel}) …`, 'act'); meta(''); }
+          if (ev.type === 'reviewed' && revLi) {
+            setLi(revLi, `Ähnlichkeit ${ev.review.score}/10`, 'ok');
+            if (ev.review.problems.length) { const li = logItem('', 'note'); li.innerHTML = `<ul class="rev">${ev.review.problems.slice(0, 4).map(x => `<li>${esc(x)}</li>`).join('')}</ul>`; }
+          }
+          if (ev.type === 'refine') revLi = logItem(`Überarbeitung nach Bildvergleich (${AI().config.codeModel}) …`, 'act');
+          if (ev.type === 'refine-fix' && revLi) setLi(revLi, 'Überarbeitung wird repariert …', 'act');
+          if (ev.type === 'refined' && revLi) setLi(revLi, !ev.ok ? 'Überarbeitung verworfen (Prüfung nicht bestanden)'
+            : ev.better ? `Überarbeitung übernommen (${ev.before} → ${ev.after}/10)` : `Überarbeitung verworfen (${ev.before} → ${ev.after}/10)`, ev.ok && ev.better ? 'ok' : 'note');
           if (ev.type === 'failed') {
             if (stepLi) setLi(stepLi, 'Prüfung fehlgeschlagen', 'bad'); else if (reqLi) setLi(reqLi, reqLi.textContent.replace(' …', ''), 'bad');
             const li = logItem('', 'errs');

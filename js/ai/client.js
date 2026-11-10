@@ -139,11 +139,14 @@ CG.ai.client = (() => {
         if (err.code === 'http' && /think/i.test(err.message) && body.think !== undefined) { delete body.think; continue; }
         throw err;
       }
-      return readStream(r, signal, line => {
+      const out = await readStream(r, signal, line => {
         let m; try { m = JSON.parse(line); } catch (e) { return null; }
         if (m.error) throw new AiError('server', String(m.error));
         return { text: (m.message && m.message.content) || '', tick: !!(m.message && (m.message.content || m.message.thinking)) };
       }, onChunk);
+      // manche Modelle antworten mit think:false leer -> einmal ohne Vorgabe wiederholen
+      if (!out.text.trim() && body.think === false) { delete body.think; continue; }
+      return out;
     }
   }
 

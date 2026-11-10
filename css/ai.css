@@ -138,3 +138,4 @@
 .lib-head h2 { margin: 0 3px; flex: 1; }
 .lib-head .btn { height: 32px; font-size: 12.5px; }
 .lib-head .btn .ic { width: 16px; height: 16px; }
+.run-log ul.rev { margin: 0 0 2px 15px; padding: 0 0 0 12px; color: var(--muted); font-size: 12px; }

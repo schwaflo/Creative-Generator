@@ -60,10 +60,20 @@ Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 
 1. **Referenzbild** ablegen oder wählen (wird auf max. `maxImageSide` px verkleinert), optional Zusatzwünsche.
 2. **Analyse** (Vision-Modell, JSON-Schema): Farben, Formen, Muster, Komposition, Texturen, Bewegung, passende Techniken – als JSON bearbeitbar.
-3. **Prompt** aus fester, versionierter Vorlage (`js/ai/prompt.js`, aktuell `generator-v2`) – angezeigt und editierbar („Prompt erst prüfen“).
+3. **Prompt** aus fester, versionierter Vorlage (`js/ai/prompt.js`, aktuell `generator-v3`) – angezeigt und editierbar („Prompt erst prüfen“).
+   Kann das Code-Modell Bilder lesen, bekommt es die Referenz zusätzlich direkt zu sehen.
 4. **Code** (Code-Modell, Antwort `{"code": "…"}`), automatisch geprüft: Syntax, Vertrag, Parameter-Schema, Probe-Render,
    leeres Bild, Extremwerte aller Regler. Bei Fehlern bis zu `repairAttempts` Reparaturen durch das Modell.
-5. Speichern im Browser, Regler automatisch aus dem Schema; ohne „Prompt erst prüfen“ öffnet sich am Ende die Sandbox.
+5. **Bildvergleich** (`refineRounds`): Ein Einzelbild wird neben die Referenz gelegt (links „REFERENZ“, rechts „ERGEBNIS“);
+   das Vision-Modell bewertet die Ähnlichkeit (1–10) und nennt konkrete Unterschiede, das Code-Modell überarbeitet.
+   Übernommen wird eine Überarbeitung nur, wenn sie die Prüfung besteht und mindestens gleich gut bewertet wird.
+6. Speichern im Browser, Regler automatisch aus dem Schema; ohne „Prompt erst prüfen“ öffnet sich am Ende die Sandbox.
+
+**Bildqualität**: Im Generator stehen Zeichenhilfen bereit – `noise`, `fbm`, `loopNoise` (nahtlos loopendes Rauschen),
+`smoothPath` (weiche Kurven), `mix`/`rgba`/`shade` (Farben), `lerp`, `clamp`, `smoothstep`, `TAU`. Der Prompt enthält
+Qualitätsregeln (weiche Kurven statt Zickzack, viele feine halbtransparente Linien, Volumen über Verläufe, Tiefe).
+Die Qualität hängt trotzdem stark vom Code-Modell ab – Empfehlungen für 24 GB: `gpt-oss:20b` (Code), `devstral-small-2`
+(Code und Bild), `qwen3.5:9b-mlx` (Bildanalyse).
 
 ### Konfiguration – `config.json` + Seite „KI“
 
@@ -80,6 +90,7 @@ Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 | `timeouts.analysisSec/generationSec` | Zeitlimit pro Modellaufruf |
 | `timeouts.renderMs` | Zeitlimit pro Bild in der Sandbox (Watchdog gegen Endlosschleifen) |
 | `repairAttempts` | maximale Reparaturversuche |
+| `refineRounds` | Runden Bildvergleich + Überarbeitung (0 = aus) |
 | `maxImageSide` | längste Bildseite vor dem Senden |
 
 ### Generator-Vertrag

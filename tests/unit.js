@@ -140,10 +140,10 @@ describe('sandbox + validate', () => {
   const box = new AI.Sandbox({ timeout: 2500 });
   it('Beispiel-Generator besteht die Prüfung', async () => {
     const v = await AI.validate.run(AI.prompt.EXAMPLE, { sandbox: box, aspect: 16 / 9 });
-    assert.ok(v.ok, v.errors.join(';')); assert.equal(v.params.length, 11);
+    assert.ok(v.ok, v.errors.join(';')); assert.equal(v.params.length, 12);
   });
   it('rendert deterministisch (gleicher Seed -> gleiches Bild)', async () => {
-    const vals = { rings: 6, count: 36, dot: 0.008, shape: 'Kreis', lines: true, wave: 0.35, spin: 1, bg: '#101018', ink: '#f2c14e', accent: '#e8505b', seed: 7 };
+    const vals = { blades: 120, height: 0.55, width: 1.6, layers: 3, curl: 0.8, glow: true, sway: 0.45, flow: 1.2, bg: '#0b1a22', body: '#3fa37a', light: '#f4e9c8', seed: 7 };
     await box.load(AI.prompt.EXAMPLE);
     const a = await box.render({ values: vals, t: 0.3, w: 64, h: 36, seed: 7, stats: true });
     const b = await box.render({ values: vals, t: 0.3, w: 64, h: 36, seed: 7, stats: true });
@@ -185,7 +185,7 @@ describe('sandbox + validate', () => {
   });
   it('SVG-Export zeichnet Vektoren', async () => {
     await box.load(AI.prompt.EXAMPLE);
-    const svg = await box.svg({ values: { rings: 2, count: 6, dot: 0.01, shape: 'Kreis', lines: true, wave: 0, spin: 1, bg: '#000000', ink: '#ffffff', accent: '#ff0000', seed: 1 }, t: 0, w: 200, h: 100, seed: 1 });
+    const svg = await box.svg({ values: { blades: 10, height: 0.5, width: 2, layers: 2, curl: 0.5, glow: true, sway: 0.3, flow: 1, bg: '#000000', body: '#00ff00', light: '#ffffff', seed: 1 }, t: 0, w: 200, h: 100, seed: 1 });
     assert.match(svg, /^<svg[^>]+viewBox="0 0 200 100"/); assert.match(svg, /<path d="M/);
   });
   it('SVG-Export meldet nicht unterstützte Befehle', async () => {
@@ -318,5 +318,32 @@ describe('store', () => {
   it('kaputte Datei wird abgelehnt', async () => {
     await T.assert.rejects(AI.store.fromFile('{"type":"generator","generator":{"name":"x"}}'), /unvollständig/);
     await T.assert.rejects(AI.store.fromFile('{"foo":1}'), /Keine Generator-Datei/);
+  });
+});
+
+
+/* ---------- Zeichenhilfen in der Sandbox ---------- */
+describe('Zeichenhilfen', () => {
+  const box = new AI.Sandbox({ timeout: 2500 });
+  it('noise, loopNoise (nahtlos), smoothPath, Farben stehen bereit', async () => {
+    await box.load(`const params=[];
+const r = [noise(0.3, 0.7, 0.1), fbm(1.2, 3.4, 0, 4), loopNoise(0.5, 0.5, 0, 1, 3) - loopNoise(0.5, 0.5, 1, 1, 3), mix('#000000', '#ffffff', 0.5), rgba('#ff0000', 0.5), shade('#808080', 1), typeof smoothPath, TAU];
+function draw(ctx){ throw new Error(JSON.stringify(r)); }`);
+    const e = await T.assert.rejects(box.render({ values: {}, t: 0, w: 8, h: 8 }));
+    const r = JSON.parse(e.message);
+    assert.ok(Math.abs(r[0]) <= 1.5 && r[0] !== 0); assert.ok(Math.abs(r[1]) <= 1.5);
+    assert.ok(Math.abs(r[2]) < 1e-9, 'loopNoise bei t=0 und t=1 gleich');
+    assert.equal(r[3], 'rgb(128,128,128)'); assert.equal(r[4], 'rgba(255,0,0,0.5)'); assert.equal(r[5], 'rgb(255,255,255)');
+    assert.equal(r[6], 'function'); assert.ok(Math.abs(r[7] - Math.PI * 2) < 1e-12);
+  });
+  it('Prompt v3 enthält Hilfen, Qualitätsregeln und Bildvergleich', () => {
+    assert.match(AI.prompt.CONTRACT, /smoothPath\(ctx, points, closed\)/);
+    assert.match(AI.prompt.CONTRACT, /QUALITY/);
+    const m = AI.prompt.reviewMessages('CMP', { title: 'X' });
+    assert.deepEqual(m[1].images, ['CMP']); assert.match(m[1].content, /LINKS[\s\S]*REFERENZ[\s\S]*RECHTS/);
+    assert.deepEqual(AI.prompt.messages('p', 'IMG')[1].images, ['IMG']);
+    assert.equal(AI.prompt.messages('p')[1].images, undefined);
+    const r = AI.prompt.refine([{ role: 'user', content: 'p' }], 'code', { score: 3, matches: [], problems: ['A'], improvements: ['B'] }, 'CMP');
+    assert.equal(r.length, 3); assert.deepEqual(r[2].images, ['CMP']); assert.match(r[2].content, /3\/10[\s\S]*- A[\s\S]*- B/);
   });
 });

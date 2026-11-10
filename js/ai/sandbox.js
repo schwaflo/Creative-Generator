@@ -16,6 +16,59 @@ CG.ai = CG.ai || {};
     const HEAD = 2;                                           // new Function: Rumpf beginnt in Zeile 3
     let G = null, canvas = null, ctx = null, setupKey = '';
 
+    /* ---------- Zeichenhilfen: stehen dem Generator als globale Funktionen bereit ----------
+       Kleine Modelle schreiben damit weiche, organische Bilder statt eckiger Zickzack-Linien. */
+    const TAU = Math.PI * 2;
+    const P = new Uint8Array(512);
+    { let s = 1234567; const p = Array.from({ length: 256 }, (_, i) => i);
+      for (let i = 255; i > 0; i--) { s = (s * 16807) % 2147483647; const j = s % (i + 1); [p[i], p[j]] = [p[j], p[i]]; }
+      for (let i = 0; i < 512; i++) P[i] = p[i & 255]; }
+    const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+    const grad = (h, x, y, z) => { const u = h < 8 ? x : y, v = h < 4 ? y : (h === 12 || h === 14 ? x : z); return ((h & 1) ? -u : u) + ((h & 2) ? -v : v); };
+    // Perlin-Rauschen 3D, Ergebnis etwa -1..1
+    function noise(x, y = 0, z = 0) {
+      const X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255;
+      x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z);
+      const u = fade(x), v = fade(y), w = fade(z);
+      const A = P[X] + Y, AA = P[A] + Z, AB = P[A + 1] + Z, B = P[X + 1] + Y, BA = P[B] + Z, BB = P[B + 1] + Z;
+      const l = (a, b, t) => a + t * (b - a);
+      return l(l(l(grad(P[AA] & 15, x, y, z), grad(P[BA] & 15, x - 1, y, z), u), l(grad(P[AB] & 15, x, y - 1, z), grad(P[BB] & 15, x - 1, y - 1, z), u), v),
+               l(l(grad(P[AA + 1] & 15, x, y, z - 1), grad(P[BA + 1] & 15, x - 1, y, z - 1), u), l(grad(P[AB + 1] & 15, x, y - 1, z - 1), grad(P[BB + 1] & 15, x - 1, y - 1, z - 1), u), v), w) * 1.4;
+    }
+    // Fraktales Rauschen (mehrere Oktaven)
+    function fbm(x, y = 0, z = 0, octaves = 4) {
+      let s = 0, a = 0.5, n = 0;
+      for (let i = 0; i < Math.min(8, octaves); i++) { s += a * noise(x, y, z); n += a; x *= 2.03; y *= 2.03; z *= 2.03; a *= 0.5; }
+      return s / n;
+    }
+    // Nahtlos loopendes Rauschen: gleicher Wert bei t = 0 und t = 1 (radius = Stärke der Veränderung)
+    function loopNoise(x, y, t, radius = 1, offset = 0) {
+      const a = t * TAU;
+      return noise(x + radius * Math.cos(a) + offset, y + radius * Math.sin(a) + offset * 0.7, offset * 1.3);
+    }
+    // Weiche Kurve durch Punkte [[x,y], …] (Catmull-Rom); nur Pfad – danach selbst stroke()/fill()
+    function smoothPath(c, pts, closed = false, tension = 0.5) {
+      const n = pts.length;
+      if (n < 2) return;
+      const at = i => closed ? pts[(i + n) % n] : pts[Math.max(0, Math.min(n - 1, i))];
+      c.moveTo(pts[0][0], pts[0][1]);
+      const last = closed ? n : n - 1;
+      for (let i = 0; i < last; i++) {
+        const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2), k = tension / 3;
+        c.bezierCurveTo(p1[0] + (p2[0] - p0[0]) * k, p1[1] + (p2[1] - p0[1]) * k, p2[0] - (p3[0] - p1[0]) * k, p2[1] - (p3[1] - p1[1]) * k, p2[0], p2[1]);
+      }
+      if (closed) c.closePath();
+    }
+    const hexRgb = h => { const m = String(h).replace('#', ''); const v = parseInt(m.length === 3 ? m.split('').map(x => x + x).join('') : m, 16) || 0; return [v >> 16 & 255, v >> 8 & 255, v & 255]; };
+    // Farben mischen / aufhellen / transparent machen (liefert CSS-Farbtext)
+    function mix(a, b, k) { const A = hexRgb(a), B = hexRgb(b); return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * k)).join(',')})`; }
+    function rgba(hex, alpha) { return `rgba(${hexRgb(hex).join(',')},${alpha})`; }
+    function shade(hex, k) { return k >= 0 ? mix(hex, '#ffffff', k) : mix(hex, '#000000', -k); }
+    const lerp = (a, b, k) => a + (b - a) * k;
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+    Object.assign(self, { TAU, noise, fbm, loopNoise, smoothPath, mix, rgba, shade, lerp, clamp, smoothstep });
+
     function mulberry32(a) {
       return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
     }

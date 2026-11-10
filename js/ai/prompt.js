@@ -4,7 +4,7 @@
    Bei Änderungen an Vertrag/Beispiel: VERSION erhöhen (wird mit jedem Generator gespeichert). */
 CG.ai = CG.ai || {};
 CG.ai.prompt = (() => {
-  const VERSION = 'generator-v2';
+  const VERSION = 'generator-v3';
 
   /* ---------- Bildanalyse ---------- */
   const ANALYSIS_SYSTEM = 'You are an art director who describes images precisely so that a programmer can recreate their visual style as generative art. Answer in German, but keep the JSON keys in English.';
@@ -51,61 +51,92 @@ RULES
 4. p.<id> holds the current values: numbers, "#rrggbb" strings, select strings, toggle booleans.
 5. Randomness only via rng() (0..1, seeded by p.seed). Math.random is the same seeded generator.
    draw() receives a freshly seeded rng each frame, so random choices stay stable over time.
+   For seed variation, offset noise coordinates with rng() values chosen in setup().
 6. Forbidden: document, window, DOM, fetch, XMLHttpRequest, import, eval, setTimeout, setInterval, requestAnimationFrame, images, external libraries.
 7. Performance: at most about 20000 shapes per frame, no unbounded or while(true) loops.
-8. Reply with a JSON object of the form {"code": "<the complete JavaScript file>"} and nothing else.`;
+8. Reply with a JSON object of the form {"code": "<the complete JavaScript file>"} and nothing else.
+
+HELPERS (already defined globally – use them, do not redefine them)
+  noise(x, y, z)                 smooth Perlin noise, about -1..1 (change ~1 unit = one bump)
+  fbm(x, y, z, octaves)          layered noise for organic detail
+  loopNoise(x, y, t, radius, offset)  noise that loops seamlessly over t (same value at t=0 and t=1)
+  smoothPath(ctx, points, closed)     smooth curve through [[x,y], …]; call ctx.beginPath() before and stroke()/fill() after
+  mix(hexA, hexB, k), rgba(hex, alpha), shade(hex, k from -1 to 1)   -> CSS color strings
+  lerp(a, b, k), clamp(v, a, b), smoothstep(a, b, x), TAU
+
+QUALITY (the frame is compared visually with the reference image – this decides success)
+- Match the reference: same main subject, position, size, orientation, proportions and color balance.
+- Organic lines are never jagged polylines: use smoothPath() with 8–40 points per curve.
+- Fine detail = many thin, semi-transparent strokes (hundreds to thousands) with varied length, width and alpha;
+  let lines fade or taper toward their ends (ctx.lineCap = "round").
+- 3D volume = gradients: createRadialGradient offset toward the light (highlight -> main color -> shadow),
+  plus a soft rim or cast shadow. Never leave large shapes as one flat color if the reference looks 3D.
+- Organic variation comes from noise()/fbm()/loopNoise(), not from regular repetition (unless the reference is regular).
+- Depth: draw back to front; far elements smaller, thinner and mixed toward the background color.
+- Motion: gentle and continuous via loopNoise(…, t, …) or Math.sin(a * k + phase).`;
 
   const EXAMPLE = `const params = [
-  { id: "rings", label: "Ringe", type: "range", min: 2, max: 14, step: 1, default: 6, group: "Form" },
-  { id: "count", label: "Punkte", type: "range", min: 6, max: 90, step: 1, default: 36, group: "Form" },
-  { id: "dot", label: "Punktgröße", type: "range", min: 0.002, max: 0.03, step: 0.001, default: 0.008, group: "Form" },
-  { id: "shape", label: "Form", type: "select", options: ["Kreis", "Quadrat"], default: "Kreis", group: "Form" },
-  { id: "lines", label: "Linien", type: "toggle", default: true, group: "Struktur" },
-  { id: "wave", label: "Welle", type: "range", min: 0, max: 1, step: 0.01, default: 0.35, group: "Bewegung" },
-  { id: "spin", label: "Drehung", type: "range", min: 0, max: 3, step: 1, default: 1, group: "Bewegung" },
-  { id: "bg", label: "Hintergrund", type: "color", default: "#101018" },
-  { id: "ink", label: "Punkte", type: "color", default: "#f2c14e" },
-  { id: "accent", label: "Akzent", type: "color", default: "#e8505b" },
+  { id: "blades", label: "Halme", type: "range", min: 20, max: 600, step: 1, default: 260, group: "Form" },
+  { id: "height", label: "Höhe", type: "range", min: 0.1, max: 0.9, step: 0.01, default: 0.55, group: "Form" },
+  { id: "width", label: "Stärke", type: "range", min: 0.5, max: 6, step: 0.1, default: 1.6, group: "Form" },
+  { id: "layers", label: "Ebenen", type: "range", min: 1, max: 5, step: 1, default: 3, group: "Struktur" },
+  { id: "curl", label: "Krümmung", type: "range", min: 0, max: 2, step: 0.01, default: 0.8, group: "Struktur" },
+  { id: "glow", label: "Licht", type: "toggle", default: true, group: "Struktur" },
+  { id: "sway", label: "Schwingen", type: "range", min: 0, max: 1, step: 0.01, default: 0.45, group: "Bewegung" },
+  { id: "flow", label: "Strömung", type: "range", min: 0, max: 3, step: 0.01, default: 1.2, group: "Bewegung" },
+  { id: "bg", label: "Hintergrund", type: "color", default: "#0b1a22" },
+  { id: "body", label: "Halme", type: "color", default: "#3fa37a" },
+  { id: "light", label: "Licht", type: "color", default: "#f4e9c8" },
   { id: "seed", label: "Seed", type: "seed", default: 7 }
 ];
 
-let rings = [];
+let blades = [];
 function setup(ctx, p, rng) {
-  rings = [];
-  for (let i = 0; i < p.rings; i++) rings.push({ phase: rng() * Math.PI * 2, dir: rng() < 0.5 ? -1 : 1 });
+  blades = [];
+  for (let i = 0; i < p.blades; i++) {
+    blades.push({ x: rng(), layer: Math.floor(rng() * p.layers), h: 0.6 + rng() * 0.4, off: rng() * 100, lean: rng() - 0.5 });
+  }
+  blades.sort((a, b) => a.layer - b.layer);              // back to front
 }
 
 function draw(ctx, p, t, rng) {
   const W = ctx.canvas.width, H = ctx.canvas.height, S = Math.min(W, H);
-  const a = 2 * Math.PI * t;
   ctx.fillStyle = p.bg;
   ctx.fillRect(0, 0, W, H);
-  ctx.save();
-  ctx.translate(W / 2, H / 2);
-  rings.forEach((ring, i) => {
-    const r0 = S * 0.45 * (i + 1) / rings.length;
+  if (p.glow) {                                          // soft light source for depth
+    const g = ctx.createRadialGradient(W * 0.7, H * 0.25, 0, W * 0.7, H * 0.25, S * 0.9);
+    g.addColorStop(0, rgba(p.light, 0.35));
+    g.addColorStop(1, rgba(p.light, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+  ctx.lineCap = "round";
+  for (const b of blades) {
+    const depth = (b.layer + 1) / p.layers;               // 0..1, front = 1
+    const baseX = b.x * W, baseY = H * (0.85 + 0.15 * depth);
+    const len = S * p.height * b.h * (0.6 + 0.4 * depth);
     const pts = [];
-    for (let k = 0; k < p.count; k++) {
-      const ang = (k / p.count) * Math.PI * 2 + a * p.spin * ring.dir;
-      const r = r0 * (1 + p.wave * 0.12 * Math.sin(ang * 3 + ring.phase + a));
-      pts.push([Math.cos(ang) * r, Math.sin(ang) * r]);
+    for (let k = 0; k <= 10; k++) {
+      const u = k / 10;
+      const n = loopNoise(b.off + u * p.curl, depth * 3, t, p.flow * 0.3, b.off);   // seamless motion
+      const bend = (b.lean * p.curl + n * p.sway) * u * u;                          // stronger toward the tip
+      pts.push([baseX + bend * len, baseY - u * len]);
     }
-    if (p.lines) {
-      ctx.strokeStyle = p.accent;
-      ctx.lineWidth = S * 0.0015;
+    ctx.strokeStyle = mix(p.body, p.bg, 0.6 * (1 - depth));                        // far = misty
+    ctx.globalAlpha = 0.55 + 0.45 * depth;
+    ctx.lineWidth = S * 0.001 * p.width * (0.5 + depth);
+    ctx.beginPath();
+    smoothPath(ctx, pts);
+    ctx.stroke();
+    if (p.glow) {                                         // highlight at the tip
+      const tip = pts[pts.length - 1];
+      ctx.fillStyle = rgba(p.light, 0.5 * depth);
       ctx.beginPath();
-      pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-      ctx.closePath();
-      ctx.stroke();
+      ctx.arc(tip[0], tip[1], ctx.lineWidth * 0.8, 0, TAU);
+      ctx.fill();
     }
-    ctx.fillStyle = p.ink;
-    const d = S * p.dot;
-    for (const [x, y] of pts) {
-      if (p.shape === "Kreis") { ctx.beginPath(); ctx.arc(x, y, d, 0, Math.PI * 2); ctx.fill(); }
-      else ctx.fillRect(x - d, y - d, d * 2, d * 2);
-    }
-  });
-  ctx.restore();
+  }
+  ctx.globalAlpha = 1;
 }`;
 
   const SYSTEM = 'You are an expert creative coder. You write small, correct, fast HTML canvas generative-art programs that follow a given contract exactly. You answer only with a JSON object {"code": "..."} that contains the complete JavaScript file.';
@@ -154,8 +185,11 @@ ${EXAMPLE}
 Now write the generator for the reference image. Reply with the JSON object {"code": "..."} only.`;
   }
 
-  function messages(promptText) {
-    return [{ role: 'system', content: SYSTEM }, { role: 'user', content: promptText }];
+  // Mit Bild: Modelle, die Bilder lesen können, sehen die Referenz direkt (Lage, Proportionen, Licht)
+  function messages(promptText, imageBase64) {
+    const user = { role: 'user', content: promptText };
+    if (imageBase64) { user.images = [imageBase64]; user.content += '\n\nThe reference image is attached – match its composition, proportions, lighting and details.'; }
+    return [{ role: 'system', content: SYSTEM }, user];
   }
 
   /* Reparatur: bisheriger Verlauf + Fehlerliste */
@@ -169,5 +203,38 @@ Fix ALL problems. Keep the contract (const params, setup, draw; seamless loop; s
 Reply with the JSON object {"code": "<complete corrected file>"} and nothing else.` }];
   }
 
-  return { VERSION, analysisMessages, build, messages, repair, describe, CONTRACT, EXAMPLE };
+  /* ---------- Bildvergleich (Art Director) ---------- */
+  const REVIEW_SYSTEM = 'You are a strict art director. You compare a rendered frame of a generative program with its reference image and give precise, actionable feedback. Answer in German.';
+  // Ein einziges Vergleichsbild: links REFERENZ, rechts ERGEBNIS (kleine Modelle verwechseln sonst die Bilder)
+  function reviewMessages(compareBase64, analysis) {
+    return [
+      { role: 'system', content: REVIEW_SYSTEM },
+      { role: 'user', images: [compareBase64], content: `Das Bild ist zweigeteilt. LINKS (beschriftet „REFERENZ“) ist die Vorlage${analysis && analysis.title ? ` („${analysis.title}“)` : ''}. RECHTS (beschriftet „ERGEBNIS“) ist ein Einzelbild eines generativen Programms, das Motiv und Stil der Vorlage nachbilden soll.
+Beschreibe Unterschiede immer so: „Im ERGEBNIS … , in der REFERENZ …“.
+Bewerte die Ähnlichkeit (score 1–10): Motiv, Komposition und Größenverhältnisse, Formen, Farben, feine Details/Texturen, Volumen/Licht.
+- matches: was bereits gut passt
+- problems: die 3–6 wichtigsten konkreten Unterschiede
+- improvements: konkrete, umsetzbare Anweisungen an den Programmierer, z. B. „Hauptkörper doppelt so groß, diagonal von links unten nach rechts oben“, „statt Zickzack-Linie 400 feine, weiche, halbtransparente Härchen am Rand“, „Körper mit radialem Verlauf schattieren, Glanzlicht oben rechts“.` },
+    ];
+  }
+
+  /* Überarbeitung nach dem Bildvergleich */
+  function refine(base, code, review, compareBase64) {
+    const user = { role: 'user', content: '' };
+    if (compareBase64) user.images = [compareBase64];
+    return [...base,
+      { role: 'assistant', content: JSON.stringify({ code }) },
+      { ...user, content: `${compareBase64 ? 'Attached: LEFT = reference, RIGHT = current frame of your generator.\n' : ''}An art director compared a rendered frame of your generator with the reference image. Similarity: ${review.score}/10.
+Already good:
+${(review.matches || []).map(x => '- ' + x).join('\n') || '- (nothing)'}
+Problems:
+${(review.problems || []).map(x => '- ' + x).join('\n')}
+Do this:
+${(review.improvements || []).map(x => '- ' + x).join('\n')}
+
+Rewrite the generator so the frame looks much closer to the reference. Follow the QUALITY rules and use the helpers (smoothPath, noise/loopNoise, gradients).
+Keep the contract; you may add or change params. Reply with the JSON object {"code": "<complete file>"} and nothing else.` }];
+  }
+
+  return { VERSION, analysisMessages, build, messages, repair, reviewMessages, refine, describe, CONTRACT, EXAMPLE };
 })();

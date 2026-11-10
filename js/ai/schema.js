@@ -36,6 +36,10 @@ CG.ai.schema = (() => {
       'composition', 'density', 'rhythm', 'depth', 'textures', 'lineQuality', 'contrast', 'motion', 'mood', 'techniques'],
   };
 
+  // Antwortformat des Bildvergleichs
+  const REVIEW = { type: 'object', properties: { score: { type: 'integer', minimum: 1, maximum: 10 }, matches: strs, problems: strs, improvements: strs },
+    required: ['score', 'matches', 'problems', 'improvements'] };
+
   // Antwortformat des Code-Schritts
   const CODE = { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] };
 
@@ -177,5 +181,5 @@ CG.ai.schema = (() => {
     return o;
   }
 
-  return { ANALYSIS, CODE, TECHNIQUES, cleanAnalysis, normHex, validateParams, toGroups, toGenValues, fromGenValues, keyOf };
+  return { ANALYSIS, CODE, REVIEW, TECHNIQUES, cleanAnalysis, normHex, validateParams, toGroups, toGenValues, fromGenValues, keyOf };
 })();
