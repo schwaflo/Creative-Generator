@@ -347,3 +347,56 @@ function draw(ctx){ throw new Error(JSON.stringify(r)); }`);
     assert.equal(r.length, 3); assert.deepEqual(r[2].images, ['CMP']); assert.match(r[2].content, /3\/10[\s\S]*- A[\s\S]*- B/);
   });
 });
+
+/* ---------- Ebenen-Modus ---------- */
+describe('Ebenen', () => {
+  const box = new AI.Sandbox({ timeout: 3000 });
+  const plan = AI.schema.cleanPlan({ background: 'abc', layers: [
+    { id: 'Body Shape', name: 'Körper', what: 'Kapsel', where: 'Mitte', look: 'grün', motion: 'atmen', technique: 'Verlauf' },
+    { id: 'body', name: 'Härchen', what: 'feine Linien', where: 'Rand', look: 'weiß', motion: 'zittern', technique: 'smoothPath' },
+  ] });
+  it('Plan wird bereinigt (ids, Farbe, eindeutig)', () => {
+    assert.equal(plan.background, '#aabbcc');
+    assert.equal(plan.layers[0].id, 'bodyShape');
+    assert.equal(plan.layers[1].id, 'body');
+    assert.equal(AI.schema.cleanPlan({}, '#123456').background, '#123456');
+  });
+  const body = `const params = [{ id: "size", label: "Größe", type: "range", min: 0.1, max: 0.6, step: 0.01, default: 0.3 }, { id: "color", label: "Farbe", type: "color", default: "#55aa55" }];
+function draw(ctx, p, t) { const S = Math.min(ctx.canvas.width, ctx.canvas.height); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(ctx.canvas.width / 2, ctx.canvas.height / 2, S * p.size * (1 + 0.05 * Math.sin(TAU * t * p.speed)), 0, TAU); ctx.fill(); }`;
+  const hairs = `const params = [{ id: "count", label: "Anzahl", type: "range", min: 10, max: 500, step: 1, default: 120 }, { id: "color", label: "Farbe", type: "color", default: "#ffffff" }];
+let pts = [];
+function setup(ctx, p, rng) { pts = []; for (let i = 0; i < p.count; i++) pts.push(rng()); }
+function draw(ctx, p, t) { const W = ctx.canvas.width, H = ctx.canvas.height; ctx.strokeStyle = p.color; for (const u of pts) { ctx.beginPath(); ctx.moveTo(W * u, H * 0.2); ctx.lineTo(W * u, H * 0.3); ctx.stroke(); } }`;
+  it('Zusammensetzen: Regler mit Präfix, globale Regler, gültiger Generator', async () => {
+    const asm = AI.layers.assemble(plan, [{ id: 'bodyShape', name: 'Körper', code: body }, { id: 'body', name: 'Härchen', code: hairs }]);
+    const v = await AI.validate.run(asm.code, { sandbox: box, aspect: 16 / 9 });
+    assert.ok(v.ok, v.errors.join(' | '));
+    const ids = v.params.map(p => p.id);
+    assert.deepEqual(ids.slice(0, 3), ['bg', 'speed', 'seed']);
+    assert.includes(ids, 'bodyShape_size'); assert.includes(ids, 'body_count'); assert.includes(ids, 'body_color');
+    assert.equal(v.params.find(p => p.id === 'body_color').label, 'Härchen Farbe');
+    assert.equal(v.params.find(p => p.id === 'bg').default, '#aabbcc');
+  });
+  it('Ebenen sind voneinander getrennt (gleiche Namen kollidieren nicht)', async () => {
+    const asm = AI.layers.assemble(plan, [{ id: 'a', name: 'A', code: body }, { id: 'b', name: 'B', code: body.replace('#55aa55', '#ff0000') }]);
+    assert.ok((await AI.validate.run(asm.code, { sandbox: box })).ok);
+  });
+  it('Fehlerzeilen werden auf die Ebene umgerechnet', async () => {
+    const broken = 'const params = [];\nfunction draw(ctx) {\n  ctx.fillRect(0, 0, 9, 9);\n  nichtDa();\n}';
+    const asm = AI.layers.assemble(plan, [{ id: 'bodyShape', name: 'Körper', code: body }, { id: 'x', name: 'X', code: broken }]);
+    const v = await AI.validate.run(asm.code, { sandbox: box });
+    const loc = AI.layers.localizeErrors(v.errors, asm.ranges[1]);
+    assert.match(loc[0], /Zeile 4 deiner Ebene/);
+  });
+  it('Ebenen-Prompt: Plan, markierte Ebene, Vertrag, Bild', () => {
+    const m = AI.prompt.layerMessages('BRIEF', plan, 1, 'IMG');
+    assert.match(m[1].content, /2\. Härchen \(body\).*YOU WRITE THIS LAYER/);
+    assert.match(m[1].content, /1\. Körper.*already done/);
+    assert.match(m[1].content, /Do NOT fill or clear the background/);
+    assert.deepEqual(m[1].images, ['IMG']);
+    const pm = AI.prompt.planMessages('BRIEF', 'IMG');
+    assert.match(pm[1].content, /2–5 Ebenen/); assert.deepEqual(pm[1].images, ['IMG']);
+    const r = AI.prompt.layerReviewMessages('CMP', plan, 0);
+    assert.match(r[1].content, /„Körper“/); assert.match(r[1].content, /NICHT/);
+  });
+});

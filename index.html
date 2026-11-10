@@ -7,11 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Caveat:wght@600&family=Dancing+Script:wght@600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/base.css">
-<link rel="stylesheet" href="css/controls.css">
-<link rel="stylesheet" href="css/format.css">
-<link rel="stylesheet" href="css/sandbox.css">
-<link rel="stylesheet" href="css/ai.css">
+<style>html:not(.css-ready) body { visibility: hidden; background: #000; }</style>
 </head>
 <body>
 
@@ -82,42 +78,57 @@
 
 <div class="toast" id="toast"></div>
 
-<!-- Kern -->
-<script src="js/core/utils.js"></script>
-<script src="js/core/haptics.js"></script>
-<script src="js/core/icons.js"></script>
-<script src="js/core/renderer.js"></script>
-<script src="js/core/mp4.js"></script>
-<script src="js/core/assets.js"></script>
-<script src="js/core/strokes.js"></script>
-<!-- Shader & Funktionen -->
-<script src="js/gl/common.js"></script>
-<script src="js/functions/shared.js"></script>
-<script src="js/functions/fire.js"></script>
-<script src="js/functions/grounddata.js"></script>
-<script src="js/functions/fragment.js"></script>
-<script src="js/functions/pencil.js"></script>
-<!-- KI-Generatoren -->
-<script src="js/ai/settings.js"></script>
-<script src="js/ai/client.js"></script>
-<script src="js/ai/parse.js"></script>
-<script src="js/ai/schema.js"></script>
-<script src="js/ai/prompt.js"></script>
-<script src="js/ai/sandbox.js"></script>
-<script src="js/ai/validate.js"></script>
-<script src="js/ai/store.js"></script>
-<script src="js/ai/registry.js"></script>
-<script src="js/ai/pipeline.js"></script>
-<!-- Oberfläche -->
-<script src="js/ui/controls.js"></script>
-<script src="js/ui/format-page.js"></script>
-<script src="js/ui/panel.js"></script>
-<script src="js/ui/exporter.js"></script>
-<script src="js/ui/library.js"></script>
-<script src="js/ui/layer.js"></script>
-<script src="js/ui/sketch.js"></script>
-<script src="js/ui/vptools.js"></script>
-<script src="js/ui/ai-page.js"></script>
-<script src="js/app.js"></script>
+<!-- Lädt CSS und Skripte immer im aktuellen Stand: Jede Datei wird kurz beim Server nachgefragt
+     (unverändert = 304), danach eingebunden. Sonst nutzt der Browser nach einem Update
+     bis zu 10 Minuten die alte Fassung (GitHub Pages: max-age=600). Reihenfolge bleibt erhalten. -->
+<script>
+(async () => {
+  const css = ["css/base.css", "css/controls.css", "css/format.css", "css/sandbox.css", "css/ai.css"];
+  const js = [
+    "js/core/utils.js",
+    "js/core/haptics.js",
+    "js/core/icons.js",
+    "js/core/renderer.js",
+    "js/core/mp4.js",
+    "js/core/assets.js",
+    "js/core/strokes.js",
+    "js/gl/common.js",
+    "js/functions/shared.js",
+    "js/functions/fire.js",
+    "js/functions/grounddata.js",
+    "js/functions/fragment.js",
+    "js/functions/pencil.js",
+    "js/ai/settings.js",
+    "js/ai/client.js",
+    "js/ai/parse.js",
+    "js/ai/schema.js",
+    "js/ai/prompt.js",
+    "js/ai/sandbox.js",
+    "js/ai/validate.js",
+    "js/ai/store.js",
+    "js/ai/layers.js",
+    "js/ai/registry.js",
+    "js/ai/pipeline.js",
+    "js/ui/controls.js",
+    "js/ui/format-page.js",
+    "js/ui/panel.js",
+    "js/ui/exporter.js",
+    "js/ui/library.js",
+    "js/ui/layer.js",
+    "js/ui/sketch.js",
+    "js/ui/vptools.js",
+    "js/ui/ai-page.js",
+    "js/app.js",
+  ];
+  if (location.protocol !== 'file:') await Promise.all([...css, ...js].map(u => fetch(u, { cache: 'no-cache' }).catch(() => null)));
+  await Promise.all(css.map(href => new Promise(res => {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; l.onload = l.onerror = res; document.head.appendChild(l);
+  })));
+  document.documentElement.classList.add('css-ready');
+  for (const src of js) {
+    const sc = document.createElement('script'); sc.src = src; sc.async = false; document.body.appendChild(sc);
+  }
+})();
+</script>
 </body>
 </html>

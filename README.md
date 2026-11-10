@@ -58,6 +58,12 @@ Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 
 ### Ablauf
 
+**Modus „Ebenen“ (Standard)**: Das Vision-Modell zerlegt die Referenz in 2–5 Ebenen (Plan). Das Code-Modell schreibt
+jede Ebene einzeln (`candidates` Varianten), jede wird geprüft, im Gesamtbild mit der Referenz bewertet, die beste
+bleibt; schwache Ebenen werden einmal überarbeitet. Die App setzt die Ebenen nur zusammen (`js/ai/layers.js`).
+Modus „Ein Programm“ (`mode: "single"`) schreibt alles in einem Wurf.
+
+
 1. **Referenzbild** ablegen oder wählen (wird auf max. `maxImageSide` px verkleinert), optional Zusatzwünsche.
 2. **Analyse** (Vision-Modell, JSON-Schema): Farben, Formen, Muster, Komposition, Texturen, Bewegung, passende Techniken – als JSON bearbeitbar.
 3. **Prompt** aus fester, versionierter Vorlage (`js/ai/prompt.js`, aktuell `generator-v3`) – angezeigt und editierbar („Prompt erst prüfen“).

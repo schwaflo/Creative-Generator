@@ -157,6 +157,25 @@ function draw(ctx, p, t, rng) {
   }
 
   /* Haupt-Prompt (wird im UI angezeigt und ist editierbar) */
+  /* Auftrag ohne Vertrag (für den Ebenen-Modus: Planung und jede Ebene bekommen ihn als Kontext) */
+  function brief({ analysis, wishes, format }) {
+    const a = analysis || {};
+    const colors = (a.colors || []).map(c => c.hex).filter(Boolean);
+    const aspect = format ? `${format.w} × ${format.h} px (Seitenverhältnis ${(format.w / format.h).toFixed(3)})` : 'beliebig';
+    return `# TASK
+Create a generative-art animation that recreates the visual style of the reference image described below.
+Capture its subject, composition, colors, shapes, structure, texture and mood as a parametric system with meaningful controls.
+
+# REFERENCE IMAGE (analysis)
+${describe(a) || '- (keine Analyse)'}
+
+# REQUIREMENTS
+- Target format: ${aspect}. The composition must also adapt to any other width/height.
+- Colors of the reference: ${colors.length ? colors.join(', ') : 'choose a fitting palette'}.
+- Animation: a calm, seamless loop that fits the image (motion hint: ${a.motion || 'subtle drift'}).
+${wishes && wishes.trim() ? `- Additional wishes of the user (high priority):\n${wishes.trim().split('\n').map(s => '  ' + s).join('\n')}\n` : ''}`;
+  }
+
   function build({ analysis, wishes, format }) {
     const a = analysis || {};
     const colors = (a.colors || []).map(c => c.hex).filter(Boolean);
@@ -236,5 +255,135 @@ Rewrite the generator so the frame looks much closer to the reference. Follow th
 Keep the contract; you may add or change params. Reply with the JSON object {"code": "<complete file>"} and nothing else.` }];
   }
 
-  return { VERSION, analysisMessages, build, messages, repair, reviewMessages, refine, describe, CONTRACT, EXAMPLE };
+  /* ================= Ebenen-Modus =================
+     1. Planung: Das Vision-Modell zerlegt die Referenz in Ebenen (von hinten nach vorne).
+     2. Jede Ebene schreibt das Code-Modell als eigene kleine Datei; die App setzt sie zusammen. */
+  const PLAN_SYSTEM = 'You are a technical art director for generative graphics. You break a reference image into a few drawable layers for an HTML canvas program and describe each layer precisely (what, where, look, motion, technique). Answer in German, keep JSON keys in English.';
+  function planMessages(briefText, imageBase64) {
+    const user = { role: 'user', content: `${briefText}
+# AUFGABE
+Zerlege die Referenz in 2–5 Ebenen für ein Canvas-2D-Programm, von hinten nach vorne. Der einfarbige Hintergrund ist keine Ebene (nur "background" als Hex-Farbe).
+Für jede Ebene:
+- id: kurzer englischer Bezeichner in camelCase (z. B. "body", "hairs", "flagella", "waves")
+- name: kurzer deutscher Name (z. B. "Körper", "Härchen", "Geißeln")
+- what: was genau gezeichnet wird, mit Form und Anzahl (z. B. „abgerundeter Zylinder (Kapsel), Länge 0.55 der Bildbreite, Dicke 0.16“)
+- where: Lage und Größe in Bildanteilen 0..1 (x von links, y von oben), z. B. „von (0.45, 0.62) nach (0.85, 0.22), also diagonal von links unten nach rechts oben“
+- look: Farben (Hex), Linienstärke, Transparenz, Licht und Schatten
+- motion: nahtlose Loop-Bewegung dieser Ebene
+- technique: wie man es mit Canvas 2D gut umsetzt (z. B. „radialGradient mit Glanzlicht oben rechts“, „800 kurze smoothPath-Härchen entlang der Kontur, halbtransparent“, „120 lange Fäden mit loopNoise, gebündelt am linken Ende“)` };
+    if (imageBase64) user.images = [imageBase64];
+    return [{ role: 'system', content: PLAN_SYSTEM }, user];
+  }
+
+  const LAYER_CONTRACT = `Write the code of ONE LAYER as a plain JavaScript file (no import/export). The app combines all layers (back to front) into one animation.
+Define exactly:
+
+  const params = [ ... ];                 // 2–6 controls for THIS layer only
+  function setup(ctx, p, rng) { ... }     // optional: precompute data
+  function draw(ctx, p, t, rng) { ... }   // draws ONLY this layer
+
+PARAMETER ENTRIES (labels in German):
+  { id: "count", label: "Anzahl", type: "range", min: 10, max: 2000, step: 1, default: 600 }
+  type "range": numeric min, max, step, default · type "color": default "#rrggbb" · type "select": options + default · type "toggle": default true/false
+  Do not define "seed", "bg" or "speed" – these are global.
+
+RULES
+1. Do NOT fill or clear the background – the background and the layers below are already drawn. Paint only this layer's shapes.
+2. Size: const W = ctx.canvas.width, H = ctx.canvas.height, S = Math.min(W, H). Positions as fractions of W/H, sizes relative to S – never fixed pixels.
+3. t runs 0..1 and loops seamlessly. Use a = 2 * Math.PI * t * p.speed (p.speed is a global integer 1..3) or loopNoise(…, t, …).
+   No state between frames: a frame depends only on (p, t) and data from setup().
+4. p holds this layer's params plus globals p.bg (background color) and p.speed. Randomness only via rng() (seeded).
+5. Forbidden: document, window, fetch, import, eval, setTimeout, requestAnimationFrame, images. At most ~15000 shapes, no unbounded loops.
+6. Reply with a JSON object {"code": "<the complete layer file>"} and nothing else.`;
+
+  const helpersAndQuality = () => CONTRACT.slice(CONTRACT.indexOf('HELPERS ('));
+
+  const LAYER_EXAMPLE = `const params = [
+  { id: "count", label: "Anzahl", type: "range", min: 50, max: 3000, step: 1, default: 900 },
+  { id: "length", label: "Länge", type: "range", min: 0.005, max: 0.08, step: 0.001, default: 0.025 },
+  { id: "spread", label: "Streuung", type: "range", min: 0, max: 1, step: 0.01, default: 0.4 },
+  { id: "color", label: "Farbe", type: "color", default: "#f2efe6" }
+];
+let seeds = [];
+function setup(ctx, p, rng) {
+  seeds = [];
+  for (let i = 0; i < p.count; i++) seeds.push({ u: rng(), side: rng() < 0.5 ? -1 : 1, len: 0.5 + rng(), off: rng() * 50 });
+}
+function draw(ctx, p, t, rng) {
+  const W = ctx.canvas.width, H = ctx.canvas.height, S = Math.min(W, H);
+  // fine fibres along a gentle arc from (0.2, 0.7) to (0.8, 0.3)
+  ctx.lineCap = "round";
+  ctx.strokeStyle = p.color;
+  for (const s of seeds) {
+    const x = W * lerp(0.2, 0.8, s.u), y = H * (lerp(0.7, 0.3, s.u) - 0.08 * Math.sin(s.u * Math.PI));
+    const ang = Math.atan2(-0.4 * H, 0.6 * W) + s.side * Math.PI / 2 + loopNoise(s.off, s.u * 3, t * p.speed, 0.6) * p.spread;
+    const L = S * p.length * s.len;
+    ctx.globalAlpha = 0.25 + 0.5 * s.len / 1.5;
+    ctx.lineWidth = S * 0.0012;
+    ctx.beginPath();
+    smoothPath(ctx, [[x, y], [x + Math.cos(ang) * L * 0.5, y + Math.sin(ang) * L * 0.5 + L * 0.1], [x + Math.cos(ang) * L, y + Math.sin(ang) * L]]);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}`;
+
+  const fmtLayer = (L, i) => `${i + 1}. ${L.name} (${L.id}): ${L.what} | Lage: ${L.where} | Look: ${L.look} | Bewegung: ${L.motion} | Technik: ${L.technique}`;
+
+  function layerMessages(briefText, plan, index, imageBase64) {
+    const L = plan.layers[index];
+    const user = { role: 'user', content: `${briefText}
+# LAYER PLAN (back to front; background color ${plan.background} is drawn by the app)
+${plan.layers.map((x, i) => fmtLayer(x, i) + (i === index ? '   <== YOU WRITE THIS LAYER' : i < index ? '   (already done)' : '   (comes later, do not draw it)')).join('\n')}
+
+# YOUR TASK
+Write layer ${index + 1} „${L.name}“.
+- What: ${L.what}
+- Where: ${L.where}
+- Look: ${L.look}
+- Motion: ${L.motion}
+- Technique: ${L.technique}
+Make it rich and detailed – this layer alone must look professional.
+
+# LAYER CONTRACT (must be followed exactly)
+${LAYER_CONTRACT}
+
+${helpersAndQuality()}
+
+# EXAMPLE LAYER (different subject – shows the format only)
+\`\`\`js
+${LAYER_EXAMPLE}
+\`\`\`
+${imageBase64 ? '\nThe reference image is attached – match position, size, colors and detail of this layer.' : ''}
+Reply with the JSON object {"code": "..."} only.` };
+    if (imageBase64) user.images = [imageBase64];
+    return [{ role: 'system', content: SYSTEM }, user];
+  }
+
+  // Bewertung einer einzelnen Ebene (im Vergleichsbild ist alles bis einschließlich dieser Ebene gezeichnet)
+  function layerReviewMessages(compareBase64, plan, index) {
+    const L = plan.layers[index];
+    return [
+      { role: 'system', content: REVIEW_SYSTEM },
+      { role: 'user', images: [compareBase64], content: `Das Bild ist zweigeteilt. LINKS („REFERENZ“) die Vorlage, RECHTS („ERGEBNIS“) ein generatives Programm im Aufbau.
+Im ERGEBNIS sind bisher nur diese Ebenen gezeichnet: ${plan.layers.slice(0, index + 1).map(x => x.name).join(', ')}. Weitere Ebenen folgen später – bewerte deren Fehlen NICHT.
+Bewerte nur die zuletzt hinzugefügte Ebene „${L.name}“ (soll: ${L.what}; Lage: ${L.where}; Look: ${L.look}).
+score 1–10: wie gut entspricht diese Ebene in Lage, Größe, Form, Farbe und Detail der REFERENZ?
+problems und improvements nur zu dieser Ebene, konkret („Im ERGEBNIS … , in der REFERENZ …“).` },
+    ];
+  }
+
+  // Ebene überarbeiten (nach Bewertung) bzw. reparieren (nach Fehlern)
+  function layerRefine(layerMsgs, code, review, compareBase64) {
+    const user = { role: 'user', content: `${compareBase64 ? 'Attached: LEFT = reference, RIGHT = current state with your layer.\n' : ''}An art director rated your layer ${review.score}/10.
+Problems:
+${review.problems.map(x => '- ' + x).join('\n')}
+Do this:
+${review.improvements.map(x => '- ' + x).join('\n')}
+Rewrite the layer accordingly (same contract, draw only this layer). Reply with {"code": "<complete layer file>"} only.` };
+    if (compareBase64) user.images = [compareBase64];
+    return [...layerMsgs, { role: 'assistant', content: JSON.stringify({ code }) }, user];
+  }
+
+  return { VERSION, analysisMessages, build, brief, messages, repair, reviewMessages, refine, describe, CONTRACT, EXAMPLE,
+    planMessages, layerMessages, layerReviewMessages, layerRefine, LAYER_CONTRACT, LAYER_EXAMPLE };
 })();

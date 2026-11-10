@@ -51,6 +51,7 @@ CG.aiPage = (() => {
         </section>
         <section class="ai-card">
           <header><span class="num">3</span><h3>Prompt</h3>
+            <div class="seg seg-sm ai-mode"><button type="button" data-mode="layers" title="Plan, dann Ebene für Ebene mit Varianten und Bewertung">Ebenen</button><button type="button" data-mode="single" title="Ein komplettes Programm in einem Wurf">Ein Programm</button></div>
             <button class="act" type="button" data-a="rebuild" title="Aus Analyse neu aufbauen">${CG.icon('reset')}</button></header>
           <textarea class="ai-text ai-prompt" spellcheck="false" placeholder="Wird aus der Analyse erzeugt"></textarea>
           <div class="ai-row"><span class="meta-line prompt-meta"></span><button class="btn" type="button" data-a="send">Senden</button></div>
@@ -131,6 +132,15 @@ CG.aiPage = (() => {
       }
       imp.value = '';
       if (n) { renderLibrary(); CG.panel.build(); toast(`${n} Generator(en) importiert`); }
+    });
+    // Modus: Ebenen (Plan -> Ebene für Ebene) oder ein Programm in einem Wurf
+    const modeBtns = q('.ai-mode').querySelectorAll('button');
+    const setMode = m => modeBtns.forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+    setMode(AI().config.mode || 'layers');
+    modeBtns.forEach(b => b.onclick = () => {
+      if (AI().config.mode === b.dataset.mode) return;
+      AI().settings.set({ mode: b.dataset.mode }); setMode(b.dataset.mode); H.tick();
+      if (!S.promptDirty) rebuildPrompt();
     });
     promptMeta();
   }
@@ -271,7 +281,8 @@ CG.aiPage = (() => {
   /* ---------- Prompt ---------- */
   function rebuildPrompt() {
     if (!R) return;
-    S.prompt = S.analysis ? AI().prompt.build({ analysis: S.analysis, wishes: R.wishes.value, format: CG.state.format }) : '';
+    const args = { analysis: S.analysis, wishes: R.wishes.value, format: CG.state.format };
+    S.prompt = S.analysis ? (AI().config.mode === 'single' ? AI().prompt.build(args) : AI().prompt.brief(args)) : '';
     R.prompt.value = S.prompt;
     promptMeta();
   }
@@ -343,10 +354,26 @@ CG.aiPage = (() => {
       const promptText = R.prompt.value;
       let reqLi = null, stepLi = null;
       let revLi = null;
-      const res = await AI().pipeline.generate(promptText, {
+      const layered = AI().config.mode !== 'single';
+      let candLi = null;
+      const res = await AI().pipeline[layered ? 'generateLayers' : 'generate'](promptText, {
         signal, aspect: CG.state.format.w / CG.state.format.h,
         reference: S.image ? S.image.base64 : null, analysis: S.analysis,
         onEvent: ev => {
+          // Ebenen-Modus
+          if (ev.type === 'plan') { reqLi = logItem(`Plane Ebenen (${AI().config.visionModel}) …`, 'act'); meta(''); }
+          if (ev.type === 'planned') {
+            setLi(reqLi, `Plan: ${ev.plan.layers.map(x => x.name).join(' → ')}`, 'ok');
+            const li = logItem('', 'note'); li.innerHTML = `<ul class="rev">${ev.plan.layers.map(x => `<li><b>${esc(x.name)}</b>: ${esc(x.what)}</li>`).join('')}</ul>`;
+          }
+          if (ev.type === 'layer') { reqLi = logItem(`Ebene ${ev.index + 1}/${ev.total}: ${ev.layer.name}`, 'act'); meta(''); }
+          if (ev.type === 'candidate') { candLi = logItem(`Variante ${ev.k + 1}/${ev.n} wird geschrieben …`, 'act'); meta(''); }
+          if (ev.type === 'layer-fix' && candLi) setLi(candLi, 'Variante wird repariert …', 'act');
+          if (ev.type === 'candidate-done' && candLi) setLi(candLi, ev.ok ? `Variante ${ev.k + 1}: ${ev.score}/10` : `Variante ${ev.k + 1}: verworfen (${(ev.errors && ev.errors[0] || '').slice(0, 90)})`, ev.ok ? 'ok' : 'note');
+          if (ev.type === 'layer-refine') candLi = logItem(`Überarbeitung der Ebene (${ev.score}/10) …`, 'act');
+          if (ev.type === 'layer-refined' && candLi) setLi(candLi, ev.ok === false ? 'Überarbeitung verworfen' : ev.better ? `Überarbeitung übernommen (${ev.before} → ${ev.after}/10)` : `Überarbeitung verworfen (${ev.before} → ${ev.after}/10)`, ev.better ? 'ok' : 'note');
+          if (ev.type === 'layer-done' && reqLi) setLi(reqLi, reqLi.textContent + ` · ${ev.score}/10`, 'ok');
+          if (ev.type === 'layer-skipped' && reqLi) setLi(reqLi, reqLi.textContent + ' · ausgelassen', 'bad');
           if (ev.type === 'models' && AI().settings.api() === 'ollama') logItem(`Speicher: nur ${AI().config.codeModel} bleibt geladen`, 'ok');
           if (ev.type === 'request') { reqLi = logItem(ev.attempt ? `Reparatur ${ev.attempt}/${ev.tries - 1} …` : `Code wird geschrieben (${AI().config.codeModel}) …`, 'act'); stepLi = null; meta(''); }
           if (ev.type === 'tokens') meta(`${ev.n} Tokens`);
@@ -372,7 +399,7 @@ CG.aiPage = (() => {
       if (AI().settings.api() === 'ollama') logItem(`${AI().config.codeModel} entladen`, 'ok');
       const name = (S.analysis && S.analysis.title) || 'KI-Generator';
       const fn = await AI().pipeline.save({ name, code: res.code, params: res.params, analysis: S.analysis || {}, prompt: promptText,
-        repairs: res.repairs, thumb: res.thumb, aspect: CG.state.format.w / CG.state.format.h });
+        repairs: res.repairs, thumb: res.thumb, aspect: CG.state.format.w / CG.state.format.h, plan: res.plan || null, mode: layered ? 'layers' : 'single' });
       logItem(`Gespeichert als „${fn.name}“ · ${res.params.length} Regler`, 'ok');
       R.runTitle.textContent = 'Fertig';
       endRun('done');

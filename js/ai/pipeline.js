@@ -194,6 +194,147 @@ CG.ai.pipeline = (() => {
     return url.split(',')[1];
   }
 
+  /* ================= Ebenen-Modus =================
+     Plan (Vision) -> je Ebene mehrere Varianten (Code) -> prüfen -> im Gesamtbild bewerten (Vision) -> beste behalten.
+     Die Modelle schreiben jeden Code selbst; die App setzt nur die Ebenen zusammen. */
+  async function generateLayers(briefText, { signal, aspect = 16 / 9, onEvent = () => {}, reference = null, analysis = null } = {}) {
+    const c = cfg();
+    const n = Math.max(1, Math.min(4, c.candidates | 0 || 2));
+    const box = new CG.ai.Sandbox({ timeout: c.timeouts.renderMs });
+    const L = CG.ai.layers;
+    const visionCode = supportsVision(c.codeModel);
+    let repairs = 0;
+    try {
+      // 1. Plan
+      onEvent({ type: 'plan' });
+      await C().ensureOnly(c.visionModel);
+      const fallbackBg = analysis && analysis.colors && analysis.colors[0] && analysis.colors[0].hex;
+      let plan;
+      {
+        const d = deadline(signal, c.timeouts.analysisSec, 'Planung');
+        try {
+          const res = await C().chat({
+            model: c.visionModel, messages: CG.ai.prompt.planMessages(briefText, reference), schema: CG.ai.schema.PLAN, schemaName: 'ebenenplan',
+            temperature: c.temperature.vision, numCtx: c.numCtx.vision, think: thinkOpt(c.visionModel), noThink: !c.think,
+            keepAlive: c.visionModel === c.codeModel ? '10m' : 0,
+          }, { signal: d.signal, onChunk: (t, k) => onEvent({ type: 'tokens', n: k }) });
+          plan = CG.ai.schema.cleanPlan(CG.ai.parse.extractJson(res.text), fallbackBg);
+        } finally { d.done(); if (c.visionModel !== c.codeModel) await C().unload(c.visionModel); }
+      }
+      if (plan.layers.length < 1) throw fail('parse', 'Die Planung lieferte keine Ebenen. Bitte erneut versuchen.');
+      onEvent({ type: 'planned', plan });
+
+      // 2. Ebenen
+      const done = [];                                   // [{ id, name, code }]
+      let lastScore = null;
+      for (let i = 0; i < plan.layers.length; i++) {
+        const layer = plan.layers[i];
+        onEvent({ type: 'layer', index: i, total: plan.layers.length, layer });
+        const msgs = CG.ai.prompt.layerMessages(briefText, plan, i, visionCode ? reference : null);
+        let best = null;                                   // { code, score, review, compare }
+        for (let k = 0; k < n; k++) {
+          onEvent({ type: 'candidate', index: i, k, n });
+          const cand = await writeLayer(msgs, { temperature: k ? Math.min(1, c.temperature.code + 0.35 * k) : c.temperature.code, layer, plan, done, box, aspect, signal, onEvent, index: i });
+          repairs += cand.repairs;
+          if (!cand.ok) { onEvent({ type: 'candidate-done', index: i, k, ok: false, errors: cand.errors }); continue; }
+          const rv = reference ? await rateLayer(cand.assembled, { box, aspect, reference, plan, index: i, signal }) : { review: { score: 5, problems: [], improvements: [] }, compare: null };
+          onEvent({ type: 'candidate-done', index: i, k, ok: true, score: rv.review.score });
+          if (!best || rv.review.score > best.score) best = { code: cand.code, score: rv.review.score, review: rv.review, compare: rv.compare, assembled: cand.assembled };
+        }
+        // eine Überarbeitung, wenn die beste Variante schwach ist
+        if (best && reference && c.refineRounds > 0 && best.score < 6 && best.review.improvements.length) {
+          onEvent({ type: 'layer-refine', index: i, score: best.score });
+          const rmsgs = CG.ai.prompt.layerRefine(msgs, best.code, best.review, visionCode ? best.compare : null);
+          const cand = await writeLayer(rmsgs, { temperature: c.temperature.code, layer, plan, done, box, aspect, signal, onEvent, index: i, repairBase: msgs });
+          repairs += cand.repairs;
+          if (cand.ok) {
+            const rv = await rateLayer(cand.assembled, { box, aspect, reference, plan, index: i, signal });
+            const better = rv.review.score >= best.score;
+            onEvent({ type: 'layer-refined', index: i, before: best.score, after: rv.review.score, better });
+            if (better) best = { code: cand.code, score: rv.review.score, review: rv.review, compare: rv.compare, assembled: cand.assembled };
+          } else onEvent({ type: 'layer-refined', index: i, ok: false });
+        }
+        if (!best) { onEvent({ type: 'layer-skipped', index: i, layer }); continue; }
+        done.push({ id: layer.id, name: layer.name, code: best.code });
+        lastScore = best.score;
+        onEvent({ type: 'layer-done', index: i, score: best.score });
+      }
+      if (!done.length) {
+        const e = fail('invalid', 'Keine Ebene hat die Prüfung bestanden.');
+        e.errors = ['Alle Varianten aller Ebenen sind an der Prüfung gescheitert.'];
+        throw e;
+      }
+
+      // 3. Gesamtergebnis
+      const { code } = L.assemble(plan, done);
+      const v = await CG.ai.validate.run(code, { sandbox: box, aspect, renderMs: c.timeouts.renderMs });
+      if (!v.ok) { const e = fail('invalid', 'Das zusammengesetzte Ergebnis besteht die Prüfung nicht.'); e.errors = v.errors; e.lastCode = code; throw e; }
+      let score = lastScore;
+      if (reference) {
+        onEvent({ type: 'review', round: 0 });
+        const { review } = await critique({ code, params: v.params }, { box, aspect, reference, analysis, signal });
+        score = review.score;
+        onEvent({ type: 'reviewed', round: 0, review });
+      }
+      const thumb = await thumbnail(box, v.params, aspect, code);
+      return { code, params: v.params, warnings: v.warnings, repairs, thumb, score, plan };
+    } finally {
+      box.destroy();
+      await C().unload(c.codeModel);
+      if (c.visionModel !== c.codeModel) await C().unload(c.visionModel);
+    }
+  }
+
+  /* Eine Ebene schreiben lassen, zusammensetzen, prüfen; bei Fehlern bis zu 2× reparieren */
+  async function writeLayer(msgs, { temperature, layer, plan, done, box, aspect, signal, onEvent, index, repairBase }) {
+    const c = cfg();
+    await C().ensureOnly(c.codeModel);
+    let messages = msgs, errors = [], code = null, repairs = 0;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const d = deadline(signal, c.timeouts.generationSec, 'Ebene ' + layer.name);
+      let res;
+      try {
+        res = await C().chat({
+          model: c.codeModel, messages, schema: CG.ai.schema.CODE, schemaName: 'ebene',
+          temperature: attempt ? c.temperature.repair : temperature, numCtx: c.numCtx.code, think: thinkOpt(c.codeModel), noThink: !c.think, keepAlive: '10m',
+        }, { signal: d.signal, onChunk: (t, k) => onEvent({ type: 'tokens', n: k }) });
+      } finally { d.done(); }
+      code = CG.ai.parse.extractGenerated(res.text);
+      if (!code) errors = ['Die Antwort enthielt keinen Code. Antworte nur mit {"code": "<vollständige Ebenen-Datei>"}.'];
+      else {
+        const asm = CG.ai.layers.assemble(plan, [...done, { id: layer.id, name: layer.name, code }]);
+        const v = await CG.ai.validate.run(asm.code, { sandbox: box, aspect, renderMs: c.timeouts.renderMs });
+        const range = asm.ranges[asm.ranges.length - 1];
+        if (v.ok) return { ok: true, code, assembled: { code: asm.code, params: v.params }, repairs };
+        errors = CG.ai.layers.localizeErrors(v.errors, range);
+      }
+      repairs++;
+      onEvent({ type: 'layer-fix', index, errors });
+      messages = CG.ai.prompt.repair(repairBase || msgs, code || res.text.slice(0, 6000), errors);
+    }
+    return { ok: false, errors, repairs };
+  }
+
+  async function rateLayer(assembled, { box, aspect, reference, plan, index, signal }) {
+    const c = cfg();
+    await C().ensureOnly(c.visionModel);
+    const compare = await compareImage(box, assembled, aspect, reference);
+    const d = deadline(signal, c.timeouts.analysisSec, 'Bewertung');
+    try {
+      const res = await C().chat({
+        model: c.visionModel, messages: CG.ai.prompt.layerReviewMessages(compare, plan, index), schema: CG.ai.schema.REVIEW, schemaName: 'bewertung',
+        temperature: c.temperature.vision, numCtx: c.numCtx.vision, think: thinkOpt(c.visionModel), noThink: !c.think,
+        keepAlive: c.visionModel === c.codeModel ? '10m' : 0,
+      }, { signal: d.signal });
+      const j = CG.ai.parse.extractJson(res.text) || {};
+      const arr = x => Array.isArray(x) ? x.map(String).filter(Boolean).slice(0, 8) : [];
+      return { compare, review: { score: Math.max(1, Math.min(10, Math.round(+j.score) || 1)), matches: arr(j.matches), problems: arr(j.problems), improvements: arr(j.improvements) } };
+    } finally {
+      d.done();
+      if (c.visionModel !== c.codeModel) await C().unload(c.visionModel);
+    }
+  }
+
   async function thumbnail(box, params, aspect, code) {
     const vals = {}; params.forEach(p => { vals[p.id] = p.default; });
     const w = 480, h = Math.round(480 / aspect);
@@ -208,12 +349,12 @@ CG.ai.pipeline = (() => {
   }
 
   /* Im Browser speichern + als Funktion registrieren */
-  async function save({ name, code, params, analysis, prompt, repairs, thumb, aspect }) {
+  async function save({ name, code, params, analysis, prompt, repairs, thumb, aspect, plan, mode }) {
     const c = cfg();
-    const gen = await CG.ai.store.create({ name, code, params, analysis, prompt, repairs, thumb, aspect,
+    const gen = await CG.ai.store.create({ name, code, params, analysis, prompt, repairs, thumb, aspect, plan, mode,
       models: { server: CG.ai.settings.server().label, vision: c.visionModel, code: c.codeModel }, templateVersion: CG.ai.prompt.VERSION });
     return CG.ai.registry.register(gen);
   }
 
-  return { setModels, prepareImage, analyze, generate, save };
+  return { setModels, prepareImage, analyze, generate, generateLayers, save };
 })();

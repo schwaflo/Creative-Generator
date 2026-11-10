@@ -40,6 +40,26 @@ CG.ai.schema = (() => {
   const REVIEW = { type: 'object', properties: { score: { type: 'integer', minimum: 1, maximum: 10 }, matches: strs, problems: strs, improvements: strs },
     required: ['score', 'matches', 'problems', 'improvements'] };
 
+  // Ebenen-Plan
+  const LAYER = { type: 'object', properties: { id: str, name: str, what: str, where: str, look: str, motion: str, technique: str },
+    required: ['id', 'name', 'what', 'where', 'look', 'motion', 'technique'] };
+  const PLAN = { type: 'object', properties: { background: str, layers: { type: 'array', items: LAYER, minItems: 2, maxItems: 5 } },
+    required: ['background', 'layers'] };
+
+  function cleanPlan(j, fallbackBg) {
+    const o = j && typeof j === 'object' ? j : {};
+    const used = new Set();
+    const layers = (Array.isArray(o.layers) ? o.layers : []).slice(0, 5).map((L, i) => {
+      let id = String((L && L.id) || 'layer' + (i + 1)).replace(/[^A-Za-z0-9]/g, '').replace(/^[0-9]+/, '') || 'layer' + (i + 1);
+      id = id[0].toLowerCase() + id.slice(1);
+      while (used.has(id)) id += i;
+      used.add(id);
+      const f = k => String((L && L[k]) || '').slice(0, 600);
+      return { id, name: f('name').slice(0, 30) || 'Ebene ' + (i + 1), what: f('what'), where: f('where'), look: f('look'), motion: f('motion'), technique: f('technique') };
+    });
+    return { background: normHex(o.background) || fallbackBg || '#202020', layers };
+  }
+
   // Antwortformat des Code-Schritts
   const CODE = { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] };
 
@@ -181,5 +201,5 @@ CG.ai.schema = (() => {
     return o;
   }
 
-  return { ANALYSIS, CODE, REVIEW, TECHNIQUES, cleanAnalysis, normHex, validateParams, toGroups, toGenValues, fromGenValues, keyOf };
+  return { ANALYSIS, CODE, REVIEW, PLAN, cleanPlan, TECHNIQUES, cleanAnalysis, normHex, validateParams, toGroups, toGenValues, fromGenValues, keyOf };
 })();

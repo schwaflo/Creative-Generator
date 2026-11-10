@@ -28,6 +28,8 @@ CG.ai.settings = (() => {
     timeouts: { analysisSec: 240, generationSec: 900, renderMs: 4000 },
     repairAttempts: 3,
     refineRounds: 2,
+    mode: 'layers',
+    candidates: 2,
     maxImageSide: 1024,
   };
 

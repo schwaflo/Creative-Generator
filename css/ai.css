@@ -139,3 +139,6 @@
 .lib-head .btn { height: 32px; font-size: 12.5px; }
 .lib-head .btn .ic { width: 16px; height: 16px; }
 .run-log ul.rev { margin: 0 0 2px 15px; padding: 0 0 0 12px; color: var(--muted); font-size: 12px; }
+.ai-mode { flex: none; background: var(--pill); }
+.ai-mode button { padding: 4px 9px; font-size: 11.5px; }
+.run-log ul.rev b { color: #d7d9df; font-weight: 600; }
