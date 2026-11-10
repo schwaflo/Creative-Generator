@@ -194,10 +194,12 @@ CG.aiPage = (() => {
     const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
     const test = `curl -i -H "Origin: ${origin}" ${url}${srv.api === 'ollama' ? '/api/tags' : '/v1/models'}`;
     if (srv.api === 'ollama') {
-      return hint(`Keine Verbindung zu <code>${esc(url)}</code>. Läuft Ollama (App starten oder <code>ollama serve</code>)?` +
+      hint(`Keine Verbindung zu <code>${esc(url)}</code>. Läuft Ollama (App starten oder <code>ollama serve</code>)?` +
         (local ? '' : ` Diese Seitenadresse muss freigegeben sein – danach Ollama neu starten:`) +
         ' Test: bei <code>200 OK</code> passt alles, bei <code>403</code> fehlt die Freigabe.',
-        [...(local ? [] : [`launchctl setenv OLLAMA_ORIGINS "${origin}"`]), test]);
+        [...(local ? [] : [`launchctl setenv OLLAMA_ORIGINS "${origin}"`, `OLLAMA_ORIGINS="${origin}" ollama serve`]), test]);
+      if (!local) R.hint.insertAdjacentHTML('beforeend', '<span class="sub">Erster Befehl: dauerhaft für die Ollama-App (danach die App beenden und neu öffnen). Zweiter: wenn du Ollama im Terminal startest. Chrome fragt einmal nach dem Zugriff auf das lokale Netzwerk – „Zulassen“.</span>');
+      return;
     }
     hint(`Keine Verbindung zu <code>${esc(url)}</code>. Server starten, ein Modell laden und CORS erlauben` +
       (srv.id === 'lmstudio' ? ' (LM Studio: Developer › Server starten › „Enable CORS“ einschalten).' : '.') +
