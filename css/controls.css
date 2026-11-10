@@ -1,0 +1,132 @@
+/* ============ Steuerelemente ============ */
+
+/* Container (Pill) */
+.pill { display: flex; align-items: center; gap: 10px; background: var(--pill); border-radius: var(--r);
+  padding: 9px 14px; min-height: 48px; }
+.act { flex: none; width: 32px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: var(--text);
+  display: grid; place-items: center; }
+.act:hover { background: var(--pill-2); }
+.act.on { color: var(--accent); }
+.act.danger:hover { color: var(--danger); }
+
+/* Regler-Zeile */
+.ctl { display: flex; flex-direction: column; gap: 7px; }
+
+/* Kompakte Zeile: Name · Regler · Wert in einer Pill */
+.ctl.row { flex-direction: row; align-items: center; gap: 10px; background: var(--pill); border-radius: 12px;
+  padding: 2px 10px 2px 12px; min-height: 37px; }
+.ctl.row .name { flex: none; width: 104px; font-size: 12.5px; font-weight: 500; color: #d7d9df; user-select: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctl.row .slot { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.ctl.row .val { flex: none; width: 50px; text-align: right; background: transparent; border: 0; border-radius: 6px; padding: 2px 4px;
+  color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ctl.row .val:focus { outline: none; background: var(--pill-2); color: var(--text); }
+.ctl.row .act { width: 28px; height: 28px; }
+.ctl.seg-row { padding-right: 5px; }
+.ctl.seg-row .seg { background: var(--pill-3); }
+.ctl.seg-row .seg { padding: 2px; }
+.ctl.seg-row .seg button { padding: 4px 6px; font-size: 12px; }
+
+/* ---------- Wertregler ---------- */
+.vs { -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; width: 100%; height: 28px; margin: 0;
+  background: transparent; cursor: pointer; --p: 50%; }
+.vs:focus { outline: none; }
+.vs::-webkit-slider-runnable-track { height: 3px; border-radius: 3px;
+  background: linear-gradient(90deg, #c8cad2 0 var(--p), var(--track) var(--p)); }
+.vs::-moz-range-track { height: 3px; border-radius: 3px; background: var(--track); }
+.vs::-moz-range-progress { height: 3px; border-radius: 3px; background: #c8cad2; }
+.vs::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; margin-top: -10.5px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.45); transition: transform .12s; }
+.vs::-moz-range-thumb { width: 24px; height: 24px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+.vs:active::-webkit-slider-thumb { transform: scale(1.08); }
+.vs:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(139,92,246,.55); }
+
+/* Verlaufsregler (z. B. Farbtemperatur) */
+.vs.grad::-webkit-slider-runnable-track { height: 22px; border-radius: 11px; background: var(--grad); }
+.vs.grad::-moz-range-track { height: 22px; border-radius: 11px; background: var(--grad); }
+.vs.grad::-moz-range-progress { background: transparent; }
+.vs.grad::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: 2px; background: transparent; border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.2); }
+.vs.grad::-moz-range-thumb { width: 16px; height: 16px; background: transparent; border: 2px solid #fff; }
+
+/* Rast-Feedback */
+@keyframes detent { 35% { transform: scale(1.22); } }
+.ctl.detent .vs::-webkit-slider-thumb { animation: detent .2s ease-out; }
+.ctl.detent .ruler-mark { animation: mark .25s ease-out; }
+@keyframes mark { 35% { transform: scaleY(1.35); background: #fff; } }
+
+/* ---------- Stufenregler ---------- */
+.stepper { position: relative; flex: 1; min-width: 0; height: 28px; }
+.stepper .dots { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.stepper .dots i { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #e8e9ee; }
+.vs.st { position: relative; }
+.vs.st::-webkit-slider-runnable-track { background: var(--track); height: 2px; }
+.vs.st::-webkit-slider-thumb { margin-top: -11px; }
+.vs.st::-moz-range-progress { background: var(--track); }
+
+/* ---------- Drehregler (Lineal) ---------- */
+.pill-ruler { padding: 6px 0; }
+.slot.pill-ruler { padding: 0; align-self: stretch; }
+.ruler { position: relative; flex: 1; height: 31px; overflow: hidden; cursor: ew-resize; touch-action: none; outline: none;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent); }
+.ruler-strip { position: absolute; inset: 0;
+  background-image: linear-gradient(90deg, #eceef2 0 2px, transparent 2px), linear-gradient(90deg, #6c707a 0 1px, transparent 1px);
+  background-size: 108px 20px, 12px 11px; background-repeat: repeat-x; }
+.ruler-mark { position: absolute; left: 50%; top: 4px; bottom: 4px; width: 2px; margin-left: -1px; border-radius: 2px;
+  background: var(--accent); transform-origin: center; }
+.ruler-mark::before { content: ""; position: absolute; left: 50%; top: -2px; width: 5px; height: 5px; margin-left: -2.5px;
+  border-radius: 50%; background: var(--accent); }
+.ruler:focus-visible .ruler-mark { box-shadow: 0 0 0 2px rgba(139,92,246,.4); }
+
+/* ---------- Segmente ---------- */
+.pill-seg { padding: 7px; }
+.seg { display: flex; flex: 1; gap: 2px; background: var(--seg); border-radius: 10px; padding: 3px; min-width: 0; }
+.seg button { flex: 1; min-width: 0; border: 0; border-radius: 8px; background: transparent; color: #e4e5ea;
+  padding: 7px 10px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 6px;
+  white-space: nowrap; transition: background .15s, color .15s; }
+.seg button:hover:not(.on) { background: rgba(255,255,255,.06); }
+.seg button.on { background: var(--seg-on); color: #121318; }
+.seg.seg-sm button { padding: 5px 9px; font-size: 12px; }
+
+/* ---------- Farbpalette ---------- */
+.palette { display: flex; flex: 1; height: 34px; border-radius: 6px; overflow: hidden; }
+.palette .sw { flex: 1; position: relative; cursor: pointer; }
+.palette .sw input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; }
+.palette .sw:hover { box-shadow: inset 0 0 0 2px rgba(255,255,255,.5); }
+.palette .sw.drop-on, .chips-row.drop-on { box-shadow: inset 0 0 0 2px #fff; }
+.sw-labels { display: flex; padding: 0 56px 0 14px; }
+.sw-labels span { flex: 1; text-align: center; font-size: 11px; color: var(--dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* Farbflächen-Sammlung */
+.chips-row { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px; background: var(--pill); border-radius: 12px; margin-top: 2px; }
+.chip-c { position: relative; width: 22px; height: 22px; border-radius: 7px; cursor: grab; touch-action: none;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+.chip-c b, .pal-preset .del { position: absolute; top: -5px; right: -5px; width: 14px; height: 14px; border-radius: 50%; background: #111;
+  color: #fff; font: 600 10px/14px var(--font); text-align: center; display: none; cursor: pointer; }
+.chip-c:hover b, .pal-preset:hover .del { display: block; }
+.chip-add { position: relative; width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; cursor: pointer;
+  color: var(--muted); box-shadow: inset 0 0 0 1px var(--pill-3); }
+.chip-add:hover { color: var(--text); }
+.chip-add .ic { width: 14px; height: 14px; }
+.chip-add input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: 0; padding: 0; }
+.palette .sw { touch-action: none; }
+.drag-ghost { position: fixed; left: 0; top: 0; width: 28px; height: 28px; border-radius: 8px; pointer-events: none; z-index: 100;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5), inset 0 0 0 2px rgba(255,255,255,.8); }
+
+/* Varianten */
+.pal-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 2px; }
+.pal-preset { position: relative; border: 0; background: var(--pill); border-radius: 10px; padding: 7px; display: flex; align-items: center;
+  justify-content: center; min-height: 28px; box-shadow: inset 0 0 0 1px transparent; }
+.pal-preset:hover { background: var(--pill-2); }
+.pal-preset.on { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.pal-preset .strip { display: flex; width: 100%; height: 14px; border-radius: 4px; overflow: hidden; }
+.pal-preset .strip i { flex: 1; }
+.pal-add { color: var(--muted); }
+.pal-add .ic { width: 14px; height: 14px; }
+
+/* ---------- Eingaben in Pills ---------- */
+.pill-input, .pill-select { flex: 1; min-width: 0; height: 32px; border: 0; background: transparent; color: var(--text); outline: none; }
+.pill-input::placeholder { color: var(--dim); }
+.pill-select { -webkit-appearance: none; appearance: none; cursor: pointer; font-weight: 500; }
+.pill-select option { background: #1a1b1f; }

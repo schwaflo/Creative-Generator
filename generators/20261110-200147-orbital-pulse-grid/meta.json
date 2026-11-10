@@ -1,0 +1,11 @@
+{
+  "name": "Orbital Pulse Grid",
+  "created": 1794337307164,
+  "models": {
+    "vision": "gemma4:12b-mlx",
+    "code": "gemma4:12b-mlx"
+  },
+  "templateVersion": "generator-v1",
+  "repairs": 0,
+  "aspect": 1.7777777777777777
+}

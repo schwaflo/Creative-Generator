@@ -1,0 +1,12 @@
+{
+  "server": "ollama",
+  "url": "http://localhost:11434",
+  "visionModel": "gemma4:12b-mlx",
+  "codeModel": "gemma4:12b-mlx",
+  "temperature": { "vision": 0.2, "code": 0.4, "repair": 0.2 },
+  "numCtx": { "vision": 4096, "code": 8192 },
+  "think": false,
+  "timeouts": { "analysisSec": 240, "generationSec": 900, "renderMs": 4000 },
+  "repairAttempts": 3,
+  "maxImageSide": 1024
+}

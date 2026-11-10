@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Creative Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Caveat:wght@600&family=Dancing+Script:wght@600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/controls.css">
+<link rel="stylesheet" href="css/format.css">
+<link rel="stylesheet" href="css/sandbox.css">
+<link rel="stylesheet" href="css/ai.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="logo"></span><span class="name">Creative Generator</span></div>
+  <div id="navSlot"></div>
+  <div class="spacer"></div>
+  <button class="btn export-btn" id="exportNav" type="button"><span id="exportNavIc"></span><span>Export</span></button>
+</header>
+
+<main>
+  <!-- Seite 1: Format -->
+  <section class="page" id="page-format">
+    <div class="format-wrap">
+      <div class="format-main">
+        <div class="pill aspect" id="aspectBar"></div>
+        <div class="chips" id="moreChips" hidden></div>
+
+        <div class="pill dims">
+          <label class="dim"><span>B</span><input id="inW" type="number" min="16" max="16384" step="1"></label>
+          <button class="act" id="lockBtn" type="button"></button>
+          <label class="dim"><span>H</span><input id="inH" type="number" min="16" max="16384" step="1"></label>
+          <span class="unit">px</span>
+          <button class="act" id="swapBtn" type="button" title="Drehen"></button>
+        </div>
+
+        <dl class="info" id="fmtInfo"></dl>
+        <button class="btn primary" id="toSandbox" type="button"><span>Weiter</span></button>
+      </div>
+      <div class="format-side"><div id="fmtShape"></div></div>
+      <div class="library" id="library"></div>
+    </div>
+  </section>
+
+  <!-- Seite 3: KI-Generator (lokal über Ollama) -->
+  <section class="page" id="page-ai">
+    <div class="ai-wrap" id="aiRoot"></div>
+  </section>
+
+  <!-- Seite 2: Sandbox -->
+  <section class="page" id="page-sandbox">
+    <aside class="panel">
+      <div class="panel-head" id="panelHead"></div>
+      <div id="groups"></div>
+    </aside>
+
+    <div class="stage">
+      <div class="viewport" id="viewport">
+        <canvas id="cv"></canvas>
+        <div class="rec" id="recOverlay">
+          <span class="rec-dot"></span><span id="recTime"></span>
+          <span class="rec-bar"><i id="recBar"></i></span>
+          <button class="act" id="recCancel" type="button" title="Abbrechen"></button>
+        </div>
+      </div>
+      <div class="transport">
+        <div class="pill transport-pill">
+          <button class="play" id="playBtn" type="button"></button>
+          <input type="range" class="vs scrub" id="scrub" min="0" max="1" step="0.0005" value="0" aria-label="Position im Loop">
+          <span class="time" id="timeLbl"></span>
+        </div>
+        <div id="qualSlot"></div>
+        <button class="btn quick" id="quickExp" type="button" title="Exportieren"><span id="quickIc"></span><span id="quickLbl">PNG</span></button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<!-- Kern -->
+<script src="js/core/utils.js"></script>
+<script src="js/core/haptics.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/renderer.js"></script>
+<script src="js/core/mp4.js"></script>
+<script src="js/core/assets.js"></script>
+<script src="js/core/strokes.js"></script>
+<!-- Shader & Funktionen -->
+<script src="js/gl/common.js"></script>
+<script src="js/functions/shared.js"></script>
+<script src="js/functions/fire.js"></script>
+<script src="js/functions/grounddata.js"></script>
+<script src="js/functions/fragment.js"></script>
+<script src="js/functions/pencil.js"></script>
+<!-- KI-Generatoren -->
+<script src="js/ai/settings.js"></script>
+<script src="js/ai/client.js"></script>
+<script src="js/ai/parse.js"></script>
+<script src="js/ai/schema.js"></script>
+<script src="js/ai/prompt.js"></script>
+<script src="js/ai/sandbox.js"></script>
+<script src="js/ai/validate.js"></script>
+<script src="js/ai/store.js"></script>
+<script src="js/ai/registry.js"></script>
+<script src="js/ai/pipeline.js"></script>
+<!-- Oberfläche -->
+<script src="js/ui/controls.js"></script>
+<script src="js/ui/format-page.js"></script>
+<script src="js/ui/panel.js"></script>
+<script src="js/ui/exporter.js"></script>
+<script src="js/ui/library.js"></script>
+<script src="js/ui/layer.js"></script>
+<script src="js/ui/sketch.js"></script>
+<script src="js/ui/vptools.js"></script>
+<script src="js/ui/ai-page.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

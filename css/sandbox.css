@@ -1,0 +1,111 @@
+/* ============ Seite 2 – Sandbox ============ */
+
+/* ---------- Panel ---------- */
+.panel { width: 360px; flex: none; background: var(--panel); border-radius: 0 18px 0 0;
+  display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+.panel::-webkit-scrollbar { display: none; }
+.panel-head { flex: none; padding: 12px 16px 10px; display: flex; flex-direction: column; gap: 6px; }
+.panel-head .pill-seg { padding: 5px; min-height: 0; }
+.preset-pill { padding: 3px 5px 3px 14px; min-height: 40px; }
+
+/* Akkordeon: eine Gruppe offen, vollständig sichtbar (kein Scrollen innerhalb der Gruppe) */
+#groups { flex: none; display: flex; flex-direction: column; padding-bottom: 12px; }
+.group { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.ghead { flex: none; width: 100%; border: 0; background: transparent; display: flex; align-items: center; gap: 10px;
+  padding: 8px 18px; font-weight: 600; color: var(--muted); text-align: left; }
+.ghead:hover, .group.open .ghead { color: var(--text); }
+.ghead .chev { margin-left: auto; width: 16px; height: 16px; color: var(--dim); transition: transform .2s; }
+.group.open .ghead .chev { transform: rotate(90deg); }
+.gbody { display: none; padding: 0 16px 12px; flex-direction: column; gap: 5px; }
+.group.open .gbody { display: flex; }
+.gbody > * { flex: none; }
+
+.sub-opts { display: flex; flex-direction: column; gap: 6px; }
+.meta-line { color: var(--dim); font-size: 12px; padding: 0 3px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+/* ---------- Bühne ---------- */
+.stage { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.viewport { flex: 1; min-height: 0; position: relative; display: grid; place-items: center; padding: 28px;
+  overflow: hidden; }   /* Bildrahmen bleibt in der Vorschau und überdeckt nie das Panel */
+#cv { display: block; border-radius: 3px; box-shadow: 0 24px 80px rgba(0,0,0,.8); background: #111; }
+
+.rec { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); display: none; align-items: center; gap: 12px;
+  background: rgba(38,40,46,.95); border-radius: 999px; padding: 6px 6px 6px 16px; font-variant-numeric: tabular-nums; }
+.rec.on { display: flex; }
+.rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--danger); animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.rec-bar { width: 140px; height: 4px; border-radius: 2px; background: var(--pill-3); overflow: hidden; }
+.rec-bar i { display: block; height: 100%; width: 0; background: var(--danger); }
+
+/* Transport */
+.transport { flex: none; display: flex; align-items: center; gap: 8px; padding: 0 18px 18px; }
+.transport-pill { flex: 1; min-width: 0; padding: 6px 16px 6px 6px; gap: 14px; }
+.play { width: 36px; height: 36px; flex: none; border: 0; border-radius: 50%; background: #fff; color: #0b0b0d; display: grid; place-items: center; }
+.play .ic { width: 18px; height: 18px; }
+.scrub { flex: 1; }
+.time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#qualSlot .seg { background: var(--pill); padding: 4px; border-radius: 12px; height: 48px; }
+#qualSlot .seg button { padding: 0 12px; }
+.quick { height: 48px; border-radius: var(--r); }
+
+/* Navigation */
+.seg-nav { background: var(--pill); }
+.seg-nav button { padding: 7px 16px; }
+
+@media (max-width: 860px) {
+  #page-sandbox { flex-direction: column-reverse; }
+  .panel { width: 100%; flex: 1; border-radius: 18px 18px 0 0; }
+  .stage { flex: none; height: 50vh; }
+  .viewport { padding: 12px; }
+  .topbar { gap: 10px; padding: 0 12px; }
+  .brand .name, #qualSlot { display: none; }
+  .transport { padding: 0 12px 10px; }
+}
+
+/* ---------- Bild-Ebene ---------- */
+.upload-pill { padding: 5px 5px 5px 6px; min-height: 44px; gap: 10px; }
+.up-thumb { width: 34px; height: 34px; flex: none; border-radius: 8px; background: var(--pill-2) center / cover no-repeat;
+  background-image: none; }
+.up-thumb.empty { background-image: repeating-conic-gradient(#3a3d45 0 25%, #30333a 0 50%); background-size: 10px 10px; }
+.up-name { flex: 1; min-width: 0; font-size: 12.5px; color: #d7d9df; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.img-box { position: absolute; left: 0; top: 0; display: none; cursor: move; touch-action: none; transform-origin: center;
+  outline: 1px solid rgba(255,255,255,.9); box-shadow: 0 0 0 1px rgba(0,0,0,.35), inset 0 0 0 1px rgba(0,0,0,.25); }
+.img-box.on { display: block; }
+.img-box i { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.img-box .tl { left: -6px; top: -6px; cursor: nwse-resize; }
+.img-box .br { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.img-box .tr { right: -6px; top: -6px; cursor: nesw-resize; }
+.img-box .bl { left: -6px; bottom: -6px; cursor: nesw-resize; }
+.img-box .rot { left: 50%; top: -34px; margin-left: -6px; background: var(--accent); cursor: grab; }
+.img-box .rot::after { content: ""; position: absolute; left: 5.5px; top: 12px; width: 1px; height: 22px; background: rgba(255,255,255,.7); }
+.viewport.drop::after { content: ""; position: absolute; inset: 12px; border: 2px dashed rgba(255,255,255,.5); border-radius: 16px; pointer-events: none; }
+
+/* ---------- Viewport-Werkzeuge ---------- */
+.viewport[data-tool="pick"] #cv { cursor: crosshair; }
+.viewport[data-tool="grab"] #cv { cursor: grab; }
+.viewport[data-tool="move"] #cv { cursor: move; }
+.viewport.dragging #cv { cursor: grabbing; }
+.viewport[data-tool] { touch-action: none; }
+.viewport[data-tool=""] { touch-action: auto; }
+.palette .sw.picked { animation: picked .6s ease-out; }
+@keyframes picked { 30% { box-shadow: inset 0 0 0 3px #fff; } }
+
+/* ---------- Pencil: Zeichenfläche, Text, Werkzeuge ---------- */
+.sketch { background: var(--pill); border-radius: 12px; padding: 6px; display: grid; place-items: center; }
+.sketch canvas { display: block; border-radius: 6px; touch-action: none; cursor: crosshair; }
+.sketch-bar { min-height: 0; padding: 4px 4px 4px 10px; gap: 4px; }
+.sketch-bar .inks { display: flex; gap: 8px; flex: 1; }
+.ink { width: 20px; height: 20px; border-radius: 50%; border: 0; padding: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); }
+.ink.on { box-shadow: 0 0 0 2px var(--pill), 0 0 0 3.5px #fff; }
+.text-pill { padding: 8px 12px; min-height: 0; }
+.text-pill textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
+  font: 500 15px/1.35 var(--font); }
+.seg-compact .seg button { padding: 6px 4px; font-size: 12px; }
+.brush-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.brush { border: 0; background: var(--pill); border-radius: 10px; padding: 6px 0 4px; display: flex; flex-direction: column;
+  align-items: center; gap: 2px; color: var(--muted); min-width: 0; box-shadow: inset 0 0 0 1px transparent; }
+.brush:hover { background: var(--pill-2); }
+.brush canvas { width: 44px; height: 20px; }
+.brush span { font-size: 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; }
+.brush.on { box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--text); }

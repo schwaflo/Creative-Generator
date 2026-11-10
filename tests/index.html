@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Tests · Creative Generator KI</title>
+<style>
+  body { font: 13px/1.5 system-ui, sans-serif; background: #0c0c0e; color: #e8e8ec; padding: 24px 32px; }
+  h1 { font-size: 16px; } h2 { font-size: 14px; } .good { color: #3ccf7a; } .bad { color: #ef5b5b; }
+  .ok { color: #b8e6c8; } .no { color: #ffb4b4; } small { color: #777; } pre { margin: 2px 0 8px 18px; white-space: pre-wrap; color: #f2b8b8; }
+</style>
+</head>
+<body>
+<h1>Unit-Tests – Parser, Prompt-Builder, Schema, Sandbox</h1>
+<div id="out">läuft …</div>
+<script src="../js/core/utils.js"></script>
+<script src="../js/ai/settings.js"></script>
+<script src="../js/ai/client.js"></script>
+<script src="../js/ai/parse.js"></script>
+<script src="../js/ai/schema.js"></script>
+<script src="../js/ai/prompt.js"></script>
+<script src="../js/ai/sandbox.js"></script>
+<script src="../js/ai/validate.js"></script>
+<script src="../js/ai/store.js"></script>
+<script src="harness.js"></script>
+<script src="unit.js"></script>
+<script>T.run(document.getElementById('out'));</script>
+</body>
+</html>

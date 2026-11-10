@@ -1,0 +1,59 @@
+{
+  "title": "Orbital Pulse Grid",
+  "summary": "Ein abstraktes, geometrisches Design, das konzentrische Kreise mit einem modularen Punktgitter kombiniert. Die Komposition spielt mit radialer Symmetrie und linearen Diagonalen auf einem tiefen, kontrastreichen Hintergrund.",
+  "colors": [
+    {
+      "hex": "#050a24",
+      "role": "Background"
+    },
+    {
+      "hex": "#ff9900",
+      "role": "Primary Accent (Orange)"
+    },
+    {
+      "hex": "#e63946",
+      "role": "Secondary Accent (Red)"
+    },
+    {
+      "hex": "#f1faee",
+      "role": "Highlight (White/Off-white)"
+    }
+  ],
+  "colorMood": "High-contrast, vibrant, energetic",
+  "shapes": [
+    "Concentric circles of varying diameters",
+    "A grid of circular dots (halftone-style)",
+    "Diagonal parallel lines cutting through the composition",
+    "Circular arcs intersecting the main rings"
+  ],
+  "geometry": "Radial symmetry in the circular elements, contrasted with a rigid Cartesian grid in the dot pattern. The diagonal lines introduce a dynamic, non-orthogonal direction.",
+  "patterns": [
+    "Repeating concentric rings",
+    "A 10x10 grid of dots with varying sizes",
+    "Linear repetition of diagonal strokes"
+  ],
+  "repetition": "The rings repeat with increasing radius; the dots repeat in a structured grid; the lines repeat at a fixed angle.",
+  "symmetry": "Radial symmetry (circles) vs. Translational symmetry (grid/lines).",
+  "composition": "Asymmetrical balance: a large, heavy circular cluster on the left/center, balanced by a structured grid on the right.",
+  "density": "niedrig",
+  "rhythm": "The spacing between rings creates a visual pulse; the grid provides a steady, mechanical beat.",
+  "depth": "Flat 2D design, but depth is implied through overlapping layers (rings over lines, dots over background).",
+  "textures": [
+    "Grainy, slightly distressed line quality (mimicking screen printing)",
+    "Solid, flat color fills",
+    "High contrast between dark background and bright foreground elements"
+  ],
+  "lineQuality": "Variable thickness, slightly irregular edges to avoid a 'perfect' digital look.",
+  "contrast": "Extreme contrast between the dark navy background and the bright orange/white elements.",
+  "motion": "The concentric rings could rotate at different speeds (orbital rotation). The diagonal lines could slide horizontally. The dots could pulse in size (breathing effect) following a wave pattern.",
+  "mood": "Technological, rhythmic, structured, vibrant",
+  "techniques": [
+    "recursion",
+    "noise",
+    "particles",
+    "lines",
+    "circles",
+    "grid",
+    "halftone"
+  ]
+}

@@ -1,0 +1,118 @@
+# TASK
+Create a generative-art generator that recreates the visual style of the reference image described below.
+Capture its colors, shapes, structure, texture and mood – not a literal copy, but a parametric system with many meaningful controls.
+
+# REFERENCE IMAGE (analysis)
+- Titel: Orbital Pulse Grid
+- Zusammenfassung: Ein abstraktes, geometrisches Design, das konzentrische Kreise mit einem modularen Punktgitter kombiniert. Die Komposition spielt mit radialer Symmetrie und linearen Diagonalen auf einem tiefen, kontrastreichen Hintergrund.
+- Farben: #050a24 (Background), #ff9900 (Primary Accent (Orange)), #e63946 (Secondary Accent (Red)), #f1faee (Highlight (White/Off-white))
+- Farbstimmung: High-contrast, vibrant, energetic
+- Formen: Concentric circles of varying diameters, A grid of circular dots (halftone-style), Diagonal parallel lines cutting through the composition, Circular arcs intersecting the main rings
+- Geometrie: Radial symmetry in the circular elements, contrasted with a rigid Cartesian grid in the dot pattern. The diagonal lines introduce a dynamic, non-orthogonal direction.
+- Muster: Repeating concentric rings, A 10x10 grid of dots with varying sizes, Linear repetition of diagonal strokes
+- Wiederholung: The rings repeat with increasing radius; the dots repeat in a structured grid; the lines repeat at a fixed angle.
+- Symmetrie: Radial symmetry (circles) vs. Translational symmetry (grid/lines).
+- Komposition: Asymmetrical balance: a large, heavy circular cluster on the left/center, balanced by a structured grid on the right.
+- Dichte: niedrig
+- Rhythmus: The spacing between rings creates a visual pulse; the grid provides a steady, mechanical beat.
+- Tiefe/Ebenen: Flat 2D design, but depth is implied through overlapping layers (rings over lines, dots over background).
+- Texturen: Grainy, slightly distressed line quality (mimicking screen printing), Solid, flat color fills, High contrast between dark background and bright foreground elements
+- Linienqualität: Variable thickness, slightly irregular edges to avoid a 'perfect' digital look.
+- Kontrast: Extreme contrast between the dark navy background and the bright orange/white elements.
+- Bewegung: The concentric rings could rotate at different speeds (orbital rotation). The diagonal lines could slide horizontally. The dots could pulse in size (breathing effect) following a wave pattern.
+- Stimmung: Technological, rhythmic, structured, vibrant
+- Passende Techniken: recursion, noise, particles, lines, circles, grid, halftone
+
+# REQUIREMENTS
+- Target format: 1920 × 1080 px (Seitenverhältnis 1.778). The composition must also adapt to any other width/height.
+- Use these colors as defaults for the color parameters: #050a24, #ff9900, #e63946, #f1faee.
+- Provide 8–16 parameters with real visual impact (density, size, shape variation, structure, motion amount, colors, seed).
+- Animation: a calm, seamless loop that fits the image (motion hint: The concentric rings could rotate at different speeds (orbital rotation). The diagonal lines could slide horizontally. The dots could pulse in size (breathing effect) following a wave pattern.).
+
+# CONTRACT (must be followed exactly)
+Write ONE plain JavaScript file (no import/export, no modules) that defines exactly:
+
+  const params = [ ... ];                 // parameter schema, 8–16 entries
+  function setup(ctx, p, rng) { ... }     // optional: precompute data; runs when size or parameters change
+  function draw(ctx, p, t, rng) { ... }   // paints ONE complete frame
+
+PARAMETER ENTRIES (labels in German):
+  { id: "lineWidth", label: "Linienstärke", type: "range", min: 0.5, max: 8, step: 0.1, default: 2, group: "Form" }
+  type "range":  numeric min, max, step, default (min < max, default inside)
+  type "color":  default "#rrggbb"   (one entry per color, e.g. background, main, accent)
+  type "select": options: ["Kreis", "Quadrat"], default: "Kreis"
+  type "toggle": default: true or false
+  type "seed":   default: integer — exactly one, with id "seed"
+  group: "Form", "Struktur" or "Bewegung" (colors are grouped automatically)
+
+RULES
+1. ctx is a CanvasRenderingContext2D. Size: const W = ctx.canvas.width, H = ctx.canvas.height, S = Math.min(W, H).
+   Express every size and position relative to W, H or S – never fixed pixels. The same frame is rendered at 400 px and at 4000 px.
+2. draw() must first fill the whole background (ctx.fillRect(0, 0, W, H)), then paint everything.
+3. t runs from 0 to 1 and the animation LOOPS SEAMLESSLY: t = 0 and t = 1 must look identical.
+   Animate only with periodic functions of the angle a = 2 * Math.PI * t, e.g. Math.sin(a * k + phase) with integer k.
+   Never keep or accumulate state between frames: a frame depends only on (p, t) and data from setup().
+4. p.<id> holds the current values: numbers, "#rrggbb" strings, select strings, toggle booleans.
+5. Randomness only via rng() (0..1, seeded by p.seed). Math.random is the same seeded generator.
+   draw() receives a freshly seeded rng each frame, so random choices stay stable over time.
+6. Forbidden: document, window, DOM, fetch, XMLHttpRequest, import, eval, setTimeout, setInterval, requestAnimationFrame, images, external libraries.
+7. Performance: at most about 20000 shapes per frame, no unbounded or while(true) loops.
+8. Reply with exactly ONE ```js code block and nothing else.
+
+# WORKING EXAMPLE (different style – shows the format only)
+```js
+const params = [
+  { id: "rings", label: "Ringe", type: "range", min: 2, max: 14, step: 1, default: 6, group: "Form" },
+  { id: "count", label: "Punkte", type: "range", min: 6, max: 90, step: 1, default: 36, group: "Form" },
+  { id: "dot", label: "Punktgröße", type: "range", min: 0.002, max: 0.03, step: 0.001, default: 0.008, group: "Form" },
+  { id: "shape", label: "Form", type: "select", options: ["Kreis", "Quadrat"], default: "Kreis", group: "Form" },
+  { id: "lines", label: "Linien", type: "toggle", default: true, group: "Struktur" },
+  { id: "wave", label: "Welle", type: "range", min: 0, max: 1, step: 0.01, default: 0.35, group: "Bewegung" },
+  { id: "spin", label: "Drehung", type: "range", min: 0, max: 3, step: 1, default: 1, group: "Bewegung" },
+  { id: "bg", label: "Hintergrund", type: "color", default: "#101018" },
+  { id: "ink", label: "Punkte", type: "color", default: "#f2c14e" },
+  { id: "accent", label: "Akzent", type: "color", default: "#e8505b" },
+  { id: "seed", label: "Seed", type: "seed", default: 7 }
+];
+
+let rings = [];
+function setup(ctx, p, rng) {
+  rings = [];
+  for (let i = 0; i < p.rings; i++) rings.push({ phase: rng() * Math.PI * 2, dir: rng() < 0.5 ? -1 : 1 });
+}
+
+function draw(ctx, p, t, rng) {
+  const W = ctx.canvas.width, H = ctx.canvas.height, S = Math.min(W, H);
+  const a = 2 * Math.PI * t;
+  ctx.fillStyle = p.bg;
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(W / 2, H / 2);
+  rings.forEach((ring, i) => {
+    const r0 = S * 0.45 * (i + 1) / rings.length;
+    const pts = [];
+    for (let k = 0; k < p.count; k++) {
+      const ang = (k / p.count) * Math.PI * 2 + a * p.spin * ring.dir;
+      const r = r0 * (1 + p.wave * 0.12 * Math.sin(ang * 3 + ring.phase + a));
+      pts.push([Math.cos(ang) * r, Math.sin(ang) * r]);
+    }
+    if (p.lines) {
+      ctx.strokeStyle = p.accent;
+      ctx.lineWidth = S * 0.0015;
+      ctx.beginPath();
+      pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.fillStyle = p.ink;
+    const d = S * p.dot;
+    for (const [x, y] of pts) {
+      if (p.shape === "Kreis") { ctx.beginPath(); ctx.arc(x, y, d, 0, Math.PI * 2); ctx.fill(); }
+      else ctx.fillRect(x - d, y - d, d * 2, d * 2);
+    }
+  });
+  ctx.restore();
+}
+```
+
+Now write the generator for the reference image. Reply with one ```js code block only.

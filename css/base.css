@@ -1,0 +1,58 @@
+/* ============ Tokens & Grundlayout ============ */
+:root {
+  --bg: #000;
+  --panel: #0c0c0e;
+  --pill: #26282e;
+  --pill-2: #30333a;
+  --pill-3: #3b3e46;
+  --line: #1d1e22;
+  --text: #f3f3f5;
+  --muted: #a3a6af;
+  --dim: #6c6f78;
+  --track: #5f636d;
+  --seg: #3d4049;
+  --seg-on: #a2a6b8;
+  --accent: #8b5cf6;
+  --danger: #ef5b5b;
+  --r: 14px;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 13px/1.4 var(--font); -webkit-font-smoothing: antialiased; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+[hidden] { display: none !important; }
+
+.ic { width: 20px; height: 20px; display: block; flex: none; }
+
+/* ---------- Topbar ---------- */
+.topbar { height: 60px; flex: none; display: flex; align-items: center; gap: 18px; padding: 0 18px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.logo { width: 18px; height: 18px; border-radius: 50%;
+  background: radial-gradient(circle at 65% 70%, #fff6d0 0, #ffd24d 18%, #f3a04c 42%, #e9a2b6 72%, #f7f3f1 100%); }
+.spacer { flex: 1; }
+.export-btn { height: 36px; border-radius: 10px; padding: 0 14px 0 11px; }
+.export-btn .ic { width: 18px; height: 18px; }
+
+main { flex: 1; min-height: 0; position: relative; }
+.page { position: absolute; inset: 0; display: none; }
+.page.active { display: flex; }
+
+/* ---------- Buttons ---------- */
+.btn { height: 40px; border: 0; border-radius: 12px; background: var(--pill); padding: 0 16px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 500; }
+.btn:hover { background: var(--pill-2); }
+.btn.primary { background: #fff; color: #0b0b0d; }
+.btn.primary:hover { background: #e6e6ea; }
+.btn.ghost { background: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--pill); color: var(--text); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ---------- Toast ---------- */
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(16px); background: var(--pill-2);
+  padding: 10px 16px; border-radius: 12px; opacity: 0; pointer-events: none; transition: .22s; z-index: 99; }
+.toast.on { opacity: 1; transform: translateX(-50%); }
+.err { position: absolute; inset: 0; display: grid; place-items: center; color: var(--danger); padding: 40px; text-align: center; }

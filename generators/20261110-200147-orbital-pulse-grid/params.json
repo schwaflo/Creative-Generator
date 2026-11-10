@@ -1,0 +1,120 @@
+[
+  {
+    "id": "rings",
+    "label": "Ringanzahl",
+    "type": "range",
+    "group": "Form",
+    "min": 2,
+    "max": 12,
+    "step": 1,
+    "default": 8
+  },
+  {
+    "id": "dots",
+    "label": "Punktgitter",
+    "type": "range",
+    "group": "Struktur",
+    "min": 5,
+    "max": 20,
+    "step": 1,
+    "default": 12
+  },
+  {
+    "id": "dotSize",
+    "label": "Punktgröße",
+    "type": "range",
+    "group": "Form",
+    "min": 0.001,
+    "max": 0.02,
+    "step": 0.001,
+    "default": 0.008
+  },
+  {
+    "id": "lineWidth",
+    "label": "Linienstärke",
+    "type": "range",
+    "group": "Form",
+    "min": 0.5,
+    "max": 8,
+    "step": 0.1,
+    "default": 2
+  },
+  {
+    "id": "diagonalCount",
+    "label": "Diagonalen",
+    "type": "range",
+    "group": "Struktur",
+    "min": 1,
+    "max": 10,
+    "step": 1,
+    "default": 5
+  },
+  {
+    "id": "rotationSpeed",
+    "label": "Rotationsgeschwindigkeit",
+    "type": "range",
+    "group": "Bewegung",
+    "min": 0,
+    "max": 5,
+    "step": 0.1,
+    "default": 1.2
+  },
+  {
+    "id": "pulseAmount",
+    "label": "Pulsationsstärke",
+    "type": "range",
+    "group": "Bewegung",
+    "min": 0,
+    "max": 1,
+    "step": 0.01,
+    "default": 0.5
+  },
+  {
+    "id": "shiftAmount",
+    "label": "Linienverschiebung",
+    "type": "range",
+    "group": "Bewegung",
+    "min": 0,
+    "max": 1,
+    "step": 0.01,
+    "default": 0.3
+  },
+  {
+    "id": "bg",
+    "label": "Hintergrund",
+    "type": "color",
+    "group": null,
+    "default": "#050a24"
+  },
+  {
+    "id": "primary",
+    "label": "Primärfarbe",
+    "type": "color",
+    "group": null,
+    "default": "#ff9900"
+  },
+  {
+    "id": "secondary",
+    "label": "Sekundärfarbe",
+    "type": "color",
+    "group": null,
+    "default": "#e63946"
+  },
+  {
+    "id": "highlight",
+    "label": "Akzentfarbe",
+    "type": "color",
+    "group": null,
+    "default": "#f1faee"
+  },
+  {
+    "id": "seed",
+    "label": "Seed",
+    "type": "seed",
+    "group": null,
+    "min": 0,
+    "max": 9999,
+    "step": 1,
+    "default": 42
+  }
+]

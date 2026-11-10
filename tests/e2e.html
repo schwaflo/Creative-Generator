@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>E2E · KI-Generator gegen lokales Ollama</title>
+<style>
+  body { font: 13px/1.5 system-ui, sans-serif; background: #0c0c0e; color: #e8e8ec; padding: 24px 32px; }
+  h1 { font-size: 16px; } h2 { font-size: 14px; } .good { color: #3ccf7a; } .bad { color: #ef5b5b; }
+  .ok { color: #b8e6c8; } .no { color: #ffb4b4; } small { color: #777; } pre { margin: 2px 0 8px 18px; white-space: pre-wrap; color: #f2b8b8; }
+  button { font: inherit; padding: 8px 14px; border-radius: 10px; border: 0; background: #fff; cursor: pointer; }
+  img { max-width: 360px; border-radius: 8px; margin: 10px 10px 0 0; }
+</style>
+</head>
+<body>
+<h1>End-to-End: Bild → Analyse → Prompt → Generator (Browser direkt → Ollama)</h1>
+<p>Testet die Ollama-Schnittstelle und die OpenAI-kompatible Schnittstelle (über Ollamas <code>/v1</code>).
+Dauert einige Minuten. Es wird nichts gespeichert; die KI-Einstellungen dieses Browsers werden danach wiederhergestellt.
+<button id="go">Starten</button></p>
+<div id="out"></div>
+<div id="imgs"></div>
+<script src="../js/core/utils.js"></script>
+<script src="../js/ai/settings.js"></script>
+<script src="../js/ai/client.js"></script>
+<script src="../js/ai/parse.js"></script>
+<script src="../js/ai/schema.js"></script>
+<script src="../js/ai/prompt.js"></script>
+<script src="../js/ai/sandbox.js"></script>
+<script src="../js/ai/validate.js"></script>
+<script src="../js/ai/store.js"></script>
+<script src="../js/ai/pipeline.js"></script>
+<script src="harness.js"></script>
+<script>
+const { it, assert } = T;
+const AI = CG.ai;
+const OLLAMA = 'http://localhost:11434';
+const ctx = { runs: {} };
+const loadedNow = async () => (await (await fetch(OLLAMA + '/api/ps')).json()).models.map(m => m.name);
+let image = null;
+
+it('Einstellungen laden (config.json), Server: Ollama', async () => {
+  ctx.savedSettings = localStorage.getItem('cg.v1.ai.settings');
+  await AI.settings.load();
+  AI.settings.set({ server: 'ollama', url: OLLAMA });
+  const s = await AI.client.status();
+  assert.ok(s.ok, 'Ollama nicht erreichbar: ' + (s.error && s.error.message));
+  assert.deepEqual(s.missing, [], 'fehlende Modelle: ' + s.missing.map(m => m.cmd).join(', '));
+  AI.pipeline.setModels(s.models);
+  const blob = await (await fetch('fixtures/reference.png')).blob();
+  image = await AI.pipeline.prepareImage(new File([blob], 'reference.png', { type: 'image/png' }), AI.config.maxImageSide);
+  assert.ok(Math.max(image.w, image.h) <= AI.config.maxImageSide);
+});
+
+it('Fehlendes Modell wird verständlich gemeldet', async () => {
+  const e = await assert.rejects(AI.client.chat({ model: 'gibt-es-nicht:1', messages: [{ role: 'user', content: 'hi' }] }));
+  assert.equal(e.code, 'model_missing'); assert.match(e.message, /ollama pull gibt-es-nicht:1/);
+});
+
+async function fullRun(label) {
+  const r = ctx.runs[label] = {};
+  let t0 = performance.now();
+  r.analysis = await AI.pipeline.analyze(image.base64, {});
+  r.anaMs = performance.now() - t0;
+  assert.ok(r.analysis.title, 'Titel fehlt');
+  assert.ok(r.analysis.colors.length >= 2, 'zu wenige Farben');
+  const prompt = AI.prompt.build({ analysis: r.analysis, wishes: 'Geschwindigkeitsregler für die Animation', format: { w: 1920, h: 1080 } });
+  t0 = performance.now();
+  r.events = [];
+  r.result = await AI.pipeline.generate(prompt, { aspect: 16 / 9, onEvent: e => { if (e.type !== 'tokens' && e.type !== 'step') r.events.push(e.type + (e.errors ? ': ' + e.errors.join(' | ') : '')); } });
+  r.genMs = performance.now() - t0;
+  assert.ok(r.result.params.length >= 4, 'zu wenige Regler');
+  const img = document.createElement('img'); img.src = r.result.thumb; img.title = label; document.getElementById('imgs').appendChild(img);
+  const box = new AI.Sandbox({ timeout: 6000 });
+  try { const v = await AI.validate.run(r.result.code, { sandbox: box, aspect: 1 }); assert.ok(v.ok, v.errors.join(' | ')); }
+  finally { box.destroy(); }
+}
+
+it('Ollama-Schnittstelle: Analyse + Code + Prüfung', () => fullRun('ollama'));
+
+it('Speicher: danach ist kein Modell mehr geladen', async () => assert.deepEqual(await loadedNow(), []));
+
+it('Abbrechen stoppt die Generierung und entlädt das Modell', async () => {
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), 2500);
+  const e = await assert.rejects(AI.pipeline.generate('Schreibe einen Generator für Sterne.', { signal: ac.signal }));
+  assert.equal(e.name, 'AbortError');
+  await new Promise(r => setTimeout(r, 1500));
+  assert.deepEqual(await loadedNow(), []);
+});
+
+it('OpenAI-kompatible Schnittstelle (/v1): Modelle, Analyse + Code + Prüfung', async () => {
+  AI.settings.set({ server: 'openai', url: OLLAMA });
+  const s = await AI.client.status();
+  assert.ok(s.ok && s.models.length, 'keine Modelle über /v1/models');
+  await fullRun('openai');
+  assert.equal(AI.client._levels[OLLAMA + '|' + AI.config.codeModel], 'json_schema');
+});
+
+it('Einstellungen wiederhergestellt', async () => {
+  if (ctx.savedSettings === null) localStorage.removeItem('cg.v1.ai.settings'); else localStorage.setItem('cg.v1.ai.settings', ctx.savedSettings);
+  await AI.settings.load();
+  // Modell der OpenAI-Runde entladen (dort steuert die App den Speicher nicht)
+  await fetch(OLLAMA + '/api/generate', { method: 'POST', body: JSON.stringify({ model: AI.config.codeModel, keep_alive: 0 }) });
+});
+
+async function go() {
+  document.getElementById('go').disabled = true;
+  const r = await T.run(document.getElementById('out'));
+  const info = document.createElement('p');
+  info.innerHTML = Object.entries(ctx.runs).map(([k, v]) => `<small>${k}: Analyse ${Math.round((v.anaMs || 0) / 1000)} s · Code ${Math.round((v.genMs || 0) / 1000)} s · Reparaturen ${v.result ? v.result.repairs : '–'} · ${(v.events || []).join(' → ')}</small>`).join('<br>');
+  document.getElementById('out').appendChild(info);
+  window.__e2e = { ...r, runs: Object.fromEntries(Object.entries(ctx.runs).map(([k, v]) => [k, { anaS: Math.round(v.anaMs / 1000), genS: Math.round(v.genMs / 1000), repairs: v.result && v.result.repairs, events: v.events, title: v.analysis && v.analysis.title, params: v.result && v.result.params.length }])) };
+}
+document.getElementById('go').onclick = go;
+if (/[?&]run=1/.test(location.search)) go();
+</script>
+</body>
+</html>
