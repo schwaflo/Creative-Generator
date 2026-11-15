@@ -113,11 +113,28 @@ vec3 effect(vec2 fc, vec2 uv0){
   /* Kleinigkeiten selbst korrigieren statt eine Reparaturrunde zu verlangen:
      - ungültige Regler-ids (Umlaute, Leerzeichen, Bindestriche) -> gültige ids, auch im Shader ersetzt
      - selbst deklarierte Regler-Uniforms (uniform float u_x;) -> entfernt, die App deklariert sie */
-  function tidy(params, code) {
+  function tidy(params, code, prev) {
     const fixes = [];
     let src = String(code || '');
+    const prevById = new Map((Array.isArray(prev) ? prev : []).map(p => [p.id, p]));
     const out = (Array.isArray(params) ? params : []).map(p => {
-      if (!p || typeof p !== 'object' || typeof p.id !== 'string' || /^[A-Za-z_]\w*$/.test(p.id)) return p;
+      if (!p || typeof p !== 'object' || typeof p.id !== 'string') return p;
+      // verrutschte Werte: "group": "Form, min, max, step, default, 0.5, 2, 0.01, 0.5" -> zurück in die Felder
+      if (typeof p.group === 'string' && /,\s*(?:min|max|step|default|options)\b/.test(p.group)) {
+        const parts = p.group.split(',').map(x => x.trim());
+        const names = [], vals = [];
+        for (const x of parts.slice(1)) (/^(?:min|max|step|default|options)$/.test(x) ? names : vals).push(x);
+        p = { ...p, group: parts[0] };
+        names.forEach((n, i) => { if (p[n] === undefined && vals[i] !== undefined && n !== 'options') p[n] = /^-?[\d.]+$/.test(vals[i]) ? +vals[i] : vals[i] === 'true' ? true : vals[i] === 'false' ? false : vals[i]; });
+        fixes.push(`${p.id}: verrutschte Werte zurückgeholt`);
+      }
+      // fehlende Angaben aus der vorigen Runde übernehmen (gleicher Regler, gleicher Typ)
+      const old = prevById.get(p.id);
+      if (old && String(p.type || old.type) === old.type) {
+        const miss = ['min', 'max', 'step', 'default', 'options', 'label'].filter(k => p[k] === undefined && old[k] !== undefined);
+        if (miss.length) { p = { ...p }; miss.forEach(k => { p[k] = old[k]; }); }
+      }
+      if (/^[A-Za-z_]\w*$/.test(p.id)) return p;
       const id = p.id.replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue').replace(/ß/g, 'ss')
         .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\W+/g, '_').replace(/^(\d)/, '_$1') || 'p';
       const esc = p.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -151,6 +168,7 @@ vec3 effect(vec2 fc, vec2 uv0){
     }).join('\n');
     const before = src;
     src = src.replace(/^[ \t]*uniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+u_\w+(?:\s*,\s*u_\w+)*\s*;[ \t]*\n?/gm, '');
+    src = src.replace(/^[ \t]*uniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+i[A-Z]\w*(?:\s*\[\s*\d+\s*\])?\s*;[ \t]*\n?/gm, '');   // iResolution, iTime … gibt es schon
     if (src !== before) fixes.push('eigene Uniform-Deklarationen entfernt');
     return { params: out, code: src, fixes };
   }

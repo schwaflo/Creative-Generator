@@ -77,7 +77,10 @@ CG.ai.schema = (() => {
       } else if (type === 'toggle') {
         q.default = p.default === true || p.default === 'true' || p.default === 1;
       }
-      out.push(q);
+      // Reihenfolge wie im Antwort-Schema (group zuletzt): Das Modell sieht diese Fassung in der nächsten Runde und ahmt sie nach –
+      // das erzwungene Format erlaubt die Felder nur in Schema-Reihenfolge
+      const { group, ...rest } = q;
+      out.push(group ? { ...rest, group } : rest);
     });
     return { ok: !errors.length, errors, warnings, params: out };
   }

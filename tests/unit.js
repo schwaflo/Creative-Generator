@@ -400,6 +400,19 @@ describe('Shader', () => {
     assert.ok(v.ok, v.errors.join(' | '));
     assert.equal(AI.shader.tidy([], 'float frac(float x){ return x; }\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(frac(1.0)); }').fixes.length, 0, 'eigene frac bleibt');
   });
+  it('Verrutschte Reglerwerte im Feld group und fehlende Angaben werden wiederhergestellt', () => {
+    const prev = [{ id: 'speed', label: 'Tempo', type: 'range', min: 0, max: 2, step: 0.01, default: 0.5 }, { id: 'c', label: 'Farbe', type: 'color', default: '#112233' }];
+    const r = AI.shader.tidy([
+      { id: 'dichte', label: 'Dichte', type: 'range', group: 'Geometrie, min, max, step, default, 1.0, 15.0, 0.1, 4.0' },
+      { id: 'c', label: 'Farbe', type: 'color', group: 'Farben, default, #f7d1e0' },
+      { id: 'speed', type: 'range' }], 'uniform vec2 iResolution;\nuniform float iTime;\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }', prev);
+    assert.deepEqual([r.params[0].group, r.params[0].min, r.params[0].max, r.params[0].step, r.params[0].default], ['Geometrie', 1, 15, 0.1, 4]);
+    assert.equal(r.params[1].default, '#f7d1e0'); assert.equal(r.params[1].group, 'Farben');
+    assert.deepEqual([r.params[2].min, r.params[2].max, r.params[2].label], [0, 2, 'Tempo']);
+    assert.ok(!/uniform/.test(r.code));
+    const v = AI.schema.validateParams(r.params);
+    assert.ok(v.ok, v.errors.join(' | ')); assert.deepEqual(Object.keys(v.params[0]).slice(-2), ['default', 'group'], 'group steht zuletzt (Schema-Reihenfolge)');
+  });
   it('Syntaxfehler zeigen auch die Zeile davor', async () => {
     const code = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){\n  float a = 1.0 +\n  ;\n  fragColor = vec4(a);\n}';
     const v = await AI.validate.runShader([], code, { sandbox: box });

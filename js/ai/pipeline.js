@@ -73,7 +73,7 @@ CG.ai.pipeline = (() => {
           params: Array.isArray(j.params) ? j.params : [],
           shader: CG.ai.parse.extractShader(j.shader != null ? String(j.shader) : res.text) || '',
         };
-        const td = CG.ai.shader.tidy(answer.params, answer.shader);
+        const td = CG.ai.shader.tidy(answer.params, answer.shader, best && best.params);
         answer.params = td.params; answer.shader = td.code;
         if (td.fixes.length) onEvent({ type: 'step', step: 'Korrigiert: ' + td.fixes.join(', ') });
         if (answer.title) title = answer.title;
