@@ -1,81 +1,19 @@
 'use strict';
 /* KI: Schemas
-   - ANALYSIS: JSON-Schema für die strukturierte Bildbeschreibung (Ollama `format`)
-   - validateParams: Parameter-Schema eines Generators prüfen und normalisieren
+   - SHADER: Antwortformat des Modells (Titel, Beobachtung/Plan, Regler, Shader) für Ollama `format` bzw. response_format
+   - validateParams: Regler-Schema prüfen und normalisieren
    - toGroups / toGenValues: Abbildung auf das Regler-System der App */
 CG.ai = CG.ai || {};
 CG.ai.schema = (() => {
-  const TECHNIQUES = ['noise', 'flowfield', 'particles', 'grid', 'tiles', 'voronoi', 'lsystem', 'recursion', 'circles',
-    'waves', 'lines', 'curves', 'halftone', 'gradient', 'typography', 'scatter', 'spirals', 'polygons'];
-
-  const str = { type: 'string' }, strs = { type: 'array', items: { type: 'string' } };
-  const ANALYSIS = {
-    type: 'object',
-    properties: {
-      title: str,
-      summary: str,
-      colors: { type: 'array', items: { type: 'object', properties: { hex: str, role: str }, required: ['hex', 'role'] } },
-      colorMood: str,
-      shapes: strs,
-      geometry: str,
-      patterns: strs,
-      repetition: str,
-      symmetry: str,
-      composition: str,
-      density: { type: 'string', enum: ['niedrig', 'mittel', 'hoch'] },
-      rhythm: str,
-      depth: str,
-      textures: strs,
-      lineQuality: str,
-      contrast: str,
-      motion: str,
-      mood: str,
-      techniques: { type: 'array', items: { type: 'string', enum: TECHNIQUES } },
-    },
-    required: ['title', 'summary', 'colors', 'colorMood', 'shapes', 'geometry', 'patterns', 'repetition', 'symmetry',
-      'composition', 'density', 'rhythm', 'depth', 'textures', 'lineQuality', 'contrast', 'motion', 'mood', 'techniques'],
-  };
-
-  // Antwortformat des Bildvergleichs
-  const REVIEW = { type: 'object', properties: { score: { type: 'integer', minimum: 1, maximum: 10 }, matches: strs, problems: strs, improvements: strs },
-    required: ['score', 'matches', 'problems', 'improvements'] };
-
-  // Ebenen-Plan
-  const LAYER = { type: 'object', properties: { id: str, name: str, what: str, where: str, look: str, motion: str, technique: str },
-    required: ['id', 'name', 'what', 'where', 'look', 'motion', 'technique'] };
-  const PLAN = { type: 'object', properties: { background: str, layers: { type: 'array', items: LAYER, minItems: 2, maxItems: 5 } },
-    required: ['background', 'layers'] };
-
-  function cleanPlan(j, fallbackBg) {
-    const o = j && typeof j === 'object' ? j : {};
-    const used = new Set();
-    const layers = (Array.isArray(o.layers) ? o.layers : []).slice(0, 5).map((L, i) => {
-      let id = String((L && L.id) || 'layer' + (i + 1)).replace(/[^A-Za-z0-9]/g, '').replace(/^[0-9]+/, '') || 'layer' + (i + 1);
-      id = id[0].toLowerCase() + id.slice(1);
-      while (used.has(id)) id += i;
-      used.add(id);
-      const f = k => String((L && L[k]) || '').slice(0, 600);
-      return { id, name: f('name').slice(0, 30) || 'Ebene ' + (i + 1), what: f('what'), where: f('where'), look: f('look'), motion: f('motion'), technique: f('technique') };
-    });
-    return { background: normHex(o.background) || fallbackBg || '#202020', layers };
-  }
-
-  // Antwortformat des Code-Schritts
-  const CODE = { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] };
-
-  // Analyse säubern (fehlende Felder ergänzen, Farben normalisieren)
-  function cleanAnalysis(a) {
-    const o = a && typeof a === 'object' ? a : {};
-    const out = {};
-    for (const k of ANALYSIS.required) {
-      const t = ANALYSIS.properties[k].type;
-      out[k] = t === 'array' ? (Array.isArray(o[k]) ? o[k] : []) : (typeof o[k] === 'string' ? o[k] : '');
-    }
-    out.colors = out.colors.map(c => ({ hex: normHex(c && c.hex), role: String((c && c.role) || '') })).filter(c => c.hex);
-    out.techniques = out.techniques.filter(t => TECHNIQUES.includes(t));
-    out.title = (out.title || 'Generator').slice(0, 60);
-    return out;
-  }
+  const str = { type: 'string' };
+  const PARAM = { type: 'object', properties: {
+      id: str, label: str, type: { type: 'string', enum: ['range', 'color', 'select', 'toggle', 'seed'] },
+      min: { type: 'number' }, max: { type: 'number' }, step: { type: 'number' },
+      default: { anyOf: [{ type: 'number' }, { type: 'string' }, { type: 'boolean' }] },
+      options: { type: 'array', items: str }, group: str },
+    required: ['id', 'label', 'type'] };
+  const SHADER = { type: 'object', properties: { title: str, notes: str, params: { type: 'array', items: PARAM }, shader: str },
+    required: ['title', 'notes', 'params', 'shader'] };
 
   function normHex(v) {
     let s = String(v || '').trim().toLowerCase();
@@ -144,8 +82,12 @@ CG.ai.schema = (() => {
      Schlüssel im App-Zustand: "g_<id>"; Farben -> Paletten-Gruppe; select ≤ 3 kurze Optionen -> Segment */
   const keyOf = id => 'g_' + id;
 
-  function toControl(p) {
+  function toControl(p, shader) {
     const base = { key: keyOf(p.id), label: p.label, genId: p.id, genType: p.type };
+    if (shader) {                                   // Regler wird direkt zur Uniform des Shaders
+      base.u = 'u_' + p.id;
+      if (p.type === 'select') base.map = v => Math.max(0, p.options.indexOf(String(v)));
+    }
     switch (p.type) {
       case 'range': {
         const c = { ...base, min: p.min, max: p.max, step: p.step, def: p.default };
@@ -163,19 +105,19 @@ CG.ai.schema = (() => {
     return null;
   }
 
-  function toGroups(fnId, params) {
+  function toGroups(fnId, params, shader = false) {
     const groups = [], byName = new Map();
     const colors = params.filter(p => p.type === 'color');
     for (const p of params) {
       if (p.type === 'color') continue;
       const name = p.type === 'seed' ? (p.group || 'Form') : (p.group || 'Form');
       if (!byName.has(name)) { const g = { id: fnId + '-' + groups.length, title: name, params: [] }; byName.set(name, g); groups.push(g); }
-      byName.get(name).params.push(toControl(p));
+      byName.get(name).params.push(toControl(p, shader));
     }
     if (colors.length) {
       const def = {}; colors.forEach(p => { def[keyOf(p.id)] = p.default; });
       groups.push({ id: fnId + '-color', title: 'Farbe', palette: true, palettes: [{ name: 'Original', c: def }],
-        params: colors.map(toControl) });
+        params: colors.map(p => toControl(p, shader)) });
     }
     return groups;
   }
@@ -201,5 +143,5 @@ CG.ai.schema = (() => {
     return o;
   }
 
-  return { ANALYSIS, CODE, REVIEW, PLAN, cleanPlan, TECHNIQUES, cleanAnalysis, normHex, validateParams, toGroups, toGenValues, fromGenValues, keyOf };
+  return { SHADER, normHex, validateParams, toGroups, toGenValues, fromGenValues, keyOf };
 })();

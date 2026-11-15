@@ -84,7 +84,11 @@ CG.ai = CG.ai || {};
       if (c.clearRect) c.clearRect(0, 0, w, h);
     }
 
+    // aktuelle Größe als globale W, H, S (häufigster Fehler kleiner Modelle: S in setup() nicht definiert)
+    const setSize = (w, h) => { self.W = w; self.H = h; self.S = Math.min(w, h); };
+
     function runSetup(c, p, seed, w, h, force) {
+      setSize(w, h);
       const key = w + 'x' + h + '|' + JSON.stringify(p);
       if (!force && key === setupKey) return;
       const rng = mulberry32(seed * 7919 + 13);
@@ -94,19 +98,21 @@ CG.ai = CG.ai || {};
       setupKey = force ? '' : key;
     }
 
-    function stats(c, w, h) {
-      const d = c.getImageData(0, 0, w, h).data;
+    function stats(c, w, h) { return statsOf(c.getImageData(0, 0, w, h).data, w, h); }
+    function statsOf(d, w, h) {
       const r0 = d[0], g0 = d[1], b0 = d[2];
       let diff = 0, sum = 0;
-      const N = 16, grid = new Array(N * N).fill(0), cnt = new Array(N * N).fill(0);
+      const N = 16, grid = new Array(N * N).fill(0), cnt = new Array(N * N).fill(0), rgb = new Array(N * N * 3).fill(0);
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const i = (y * w + x) * 4, l = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / 255;
         if (Math.abs(d[i] - r0) + Math.abs(d[i + 1] - g0) + Math.abs(d[i + 2] - b0) > 12) diff++;
         sum += l;
         const gi = Math.min(N - 1, (y * N / h) | 0) * N + Math.min(N - 1, (x * N / w) | 0);
         grid[gi] += l; cnt[gi]++;
+        rgb[gi * 3] += d[i] / 255; rgb[gi * 3 + 1] += d[i + 1] / 255; rgb[gi * 3 + 2] += d[i + 2] / 255;
       }
-      return { nonUniform: diff / (w * h), mean: sum / (w * h), grid: grid.map((v, i) => v / Math.max(1, cnt[i])) };
+      return { nonUniform: diff / (w * h), mean: sum / (w * h), grid: grid.map((v, i) => v / Math.max(1, cnt[i])),
+        rgb: rgb.map((v, i) => v / Math.max(1, cnt[(i / 3) | 0])) };
     }
 
     /* Aufzeichnender 2D-Kontext für den SVG-Export */
@@ -201,12 +207,74 @@ CG.ai = CG.ai || {};
       return c;
     }
 
+    /* ---------- Shader prüfen und rendern (WebGL2 im Worker) ---------- */
+    let glc = null, gl = null, gprog = null, gsrc = '', gloc = {};
+    function glShader(type, src) {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src); gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) { const err = new Error(gl.getShaderInfoLog(sh) || 'Shader-Fehler'); err.name = 'GLSLError'; throw err; }
+      return sh;
+    }
+    function shaderRender(m) {
+      const { w, h } = m;
+      if (!glc) {
+        glc = new OffscreenCanvas(w, h);
+        gl = glc.getContext('webgl2', { antialias: false, preserveDrawingBuffer: true, alpha: false });
+        if (!gl) throw new Error('WebGL2 ist in der Sandbox nicht verfügbar');
+        const b = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, b);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      }
+      if (glc.width !== w) glc.width = w;
+      if (glc.height !== h) glc.height = h;
+      if (m.frag !== gsrc) {
+        if (gprog) gl.deleteProgram(gprog);
+        gprog = null; gsrc = ''; gloc = {};
+        const p = gl.createProgram();
+        gl.attachShader(p, glShader(gl.VERTEX_SHADER, m.vert));
+        gl.attachShader(p, glShader(gl.FRAGMENT_SHADER, m.frag));
+        gl.bindAttribLocation(p, 0, 'a');
+        gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { const err = new Error(gl.getProgramInfoLog(p) || 'Link-Fehler'); err.name = 'GLSLError'; throw err; }
+        gprog = p; gsrc = m.frag;
+      }
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(gprog);
+      const loc = n => (n in gloc) ? gloc[n] : (gloc[n] = gl.getUniformLocation(gprog, n));
+      const f1 = (n, v) => { const l = loc(n); if (l) gl.uniform1f(l, v); };
+      gl.uniform2f(loc('uRes'), w, h);
+      const lo = loc('uOffset'); if (lo) gl.uniform2f(lo, 0, 0);
+      f1('uPhase', m.t); f1('uSS', 1); f1('uMotion', 0.6);
+      f1('uBright', 1); f1('uContrast', 1); f1('uSat', 1); f1('uTemp', 0); f1('uGrain', 0); f1('uVignette', 0);
+      f1('uImgOn', 0); f1('uImgOverlay', 1);
+      for (const [n, type, v] of m.uniforms) {
+        const l = loc(n); if (!l) continue;
+        if (type === 'vec3') gl.uniform3f(l, v[0], v[1], v[2]); else gl.uniform1f(l, v);
+      }
+      const t0 = performance.now();
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);       // wartet, bis die GPU fertig ist -> echte Zeit
+      const ms = performance.now() - t0;
+      const s = m.stats ? statsOf(px, w, h) : null;
+      if (gl.isContextLost()) throw new Error('Grafikkontext verloren – der Shader ist zu aufwendig.');
+      return { bitmap: glc.transferToImageBitmap(), stats: s, ms };
+    }
+
     self.onmessage = e => {
       const msg = e.data;
       try {
+        if (msg.type === 'shader') {
+          const r = shaderRender(msg);
+          post({ id: msg.id, type: 'frame', bitmap: r.bitmap, stats: r.stats, ms: r.ms }, [r.bitmap]);
+          return;
+        }
         if (msg.type === 'load') {
           const f = new Function(msg.code + '\n;return { params: (typeof params !== "undefined") ? params : undefined, setup: (typeof setup === "function") ? setup : null, draw: (typeof draw === "function") ? draw : null };');
           Math.random = mulberry32(1);
+          setSize(512, 512);                               // falls oberster Code schon W/H/S nutzt
           G = f();
           setupKey = '';
           let params;
@@ -236,7 +304,7 @@ CG.ai = CG.ai || {};
           post({ id: msg.id, type: 'frame', bitmap, stats: s, ms: performance.now() - t0 }, [bitmap]);
         }
       } catch (err) {
-        post({ id: msg.id, type: 'error', stage: msg.type, message: String(err && err.message || err), name: err && err.name, line: lineOf(err) });
+        post({ id: msg.id, type: 'error', stage: msg.type, message: String(err && err.message || err), name: err && err.name, line: err && err.name === 'GLSLError' ? null : lineOf(err) });
       }
     };
   }
@@ -340,6 +408,10 @@ parent.postMessage({ type: 'boot' }, '*');
     async render({ values, t, w, h, seed = 1, stats = false, timeout }) {
       if (this.loadedCode !== this.code && this.code) await this.load(this.code);
       return this._call({ type: 'render', p: values, t, w, h, seed, stats }, timeout);
+    }
+    // Shader rendern (Quelltext wird im Worker kompiliert und zwischengespeichert)
+    async shader({ frag, uniforms, t, w, h, stats = false, timeout }) {
+      return this._call({ type: 'shader', vert: CG.glsl.vert, frag, uniforms, t, w, h, stats }, timeout);
     }
     async svg({ values, t, w, h, seed = 1, timeout }) {
       if (this.loadedCode !== this.code && this.code) await this.load(this.code);

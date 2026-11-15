@@ -9,11 +9,11 @@ CG.exporter = (() => {
   let optsEl = null, infoEl = null;   // direkte Referenzen (Panel ist beim Aufbau noch nicht im DOM)
 
   // SVG gibt es nur für KI-Generatoren (Canvas-Zeichenbefehle lassen sich als Vektoren aufzeichnen)
-  const curMode = () => (mode === 'svg' && !CG.fn().ai) ? 'png' : mode;
+  const curMode = () => (mode === 'svg' && !CG.fn().exportSvg) ? 'png' : mode;
 
   function buildPanel(body) {
     const fn = CG.fn();
-    const modes = [{ v: 'png', label: 'PNG' }, { v: 'jpg', label: 'JPG' }, ...(fn.ai ? [{ v: 'svg', label: 'SVG' }] : []), { v: 'video', label: 'Video' }];
+    const modes = [{ v: 'png', label: 'PNG' }, { v: 'jpg', label: 'JPG' }, ...(fn.exportSvg ? [{ v: 'svg', label: 'SVG' }] : []), { v: 'video', label: 'Video' }];
     const fmt = CG.controls.segment({ key: '_exp', options: modes },
       curMode(), v => { mode = v; store.set('expMode', v); updateInfo(); },
       { action: { icon: 'download', title: 'Exportieren', run } });

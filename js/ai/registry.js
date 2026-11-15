@@ -121,6 +121,12 @@ vec3 effect(vec2 fc, vec2 uv){
 
   function downloadCode() {
     const g = this.gen;
+    if (g.kind === 'shader') {
+      const head = `// ${g.name} – KI-Shader (Creative Generator) · ${new Date(g.created || Date.now()).toLocaleString('de-DE')} · ${(g.models && (g.models.model || g.models.code)) || '?'} · ${g.templateVersion || '?'}\n` +
+        `// Regler (Uniforms u_<id>):\n${g.params.map(p => `//   u_${p.id}  ${p.type}  ${p.label}`).join('\n')}\n` +
+        `// Einstieg: vec3 image(vec2 uv, vec2 p, float t) – uv 0..1, p zentriert (kürzere Seite -0.5..0.5), t = Loop 0..1\n\n`;
+      return download(new Blob([head + g.code], { type: 'text/plain' }), `${slug(g.name)}.glsl`);
+    }
     const head = `/* ${g.name} – KI-Generator (Creative Generator)\n   erzeugt ${new Date(g.created || Date.now()).toLocaleString('de-DE')} mit ${(g.models && g.models.code) || '?'} · Vorlage ${g.templateVersion || '?'}\n   Vertrag: const params = [...]; function setup(ctx, p, rng); function draw(ctx, p, t, rng) – t = 0..1 (Loop) */\n\n`;
     download(new Blob([head + g.code], { type: 'text/javascript' }), `${slug(g.name)}.js`);
   }
@@ -146,6 +152,21 @@ vec3 effect(vec2 fc, vec2 uv){
   /* ---------- Verwaltung ---------- */
   function register(gen) {
     const id = 'ai-' + gen.id;
+    // Shader: läuft direkt im Renderer der App wie Feuer/Grounddata – Regler sind Uniforms
+    if (gen.kind === 'shader') {
+      const fn = {
+        id, name: gen.name, ai: true, shader: true, gen,
+        glsl: CG.ai.shader.body(gen.params, gen.code),
+        groups: S().toGroups(id, gen.params, true),
+        presets: presetsOf(gen),
+        overrides: { loopLen: 10, grain: 0 },
+        downloadCode, savePreset,
+      };
+      const i = CG.functions.findIndex(f => f.id === id);
+      if (i >= 0) CG.functions[i] = fn; else CG.functions.push(fn);
+      if (CG.R && CG.R.progs) delete CG.R.progs[id];
+      return fn;
+    }
     const fn = {
       id, name: gen.name, ai: true, gen, glsl: HOST_GLSL,
       groups: S().toGroups(id, gen.params),

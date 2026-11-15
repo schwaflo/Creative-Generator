@@ -52,5 +52,15 @@ CG.ai.parse = (() => {
     return extractCode(text);
   }
 
-  return { extractCode, extractJson, extractGenerated };
+  /* GLSL aus dem Feld "shader" (oder Freitext) – Zäune und #version entfernen */
+  function extractShader(text) {
+    // GLSL kennt keine Zeichenketten: doppelt maskierte Umbrüche/Tabs aus dem JSON sind immer Fehler des Modells
+    let s = String(text || '').replace(/\r\n?/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '  ');
+    const m = s.match(/```[ \t]*(?:glsl|frag|c|cpp|hlsl)?[^\n]*\n([\s\S]*?)(?:```|$(?![\s\S]))/);
+    if (m && /image\s*\(/.test(m[1])) s = m[1];
+    s = s.replace(/^\s*#\s*version[^\n]*\n/m, '').replace(/^\s*precision\s+\w+\s+float\s*;\s*$/m, '');
+    return s.trim() ? s.trim() + '\n' : null;
+  }
+
+  return { extractCode, extractJson, extractGenerated, extractShader };
 })();

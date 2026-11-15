@@ -24,7 +24,7 @@ Browser (Creative Generator)  ──HTTP──▶  KI-Server auf deinem Rechner 
 ```
 
 Es gibt keinen Server dazwischen. Jeder Schritt ist eine Anfrage mit erzwungenem Antwortformat (JSON-Schema) –
-Bildanalyse und Code kommen immer als verwertbares JSON zurück. Die Antwort wird gestreamt (Live-Fortschritt, Abbrechen).
+Die Antwort (Beschreibung, Regler, Shader) kommt immer als verwertbares JSON zurück. Die Antwort wird gestreamt (Live-Fortschritt, Abbrechen).
 
 **Ollama**
 - Modelle: `GET /api/tags` · Anfrage: `POST /api/chat` mit `format` (JSON-Schema), `stream: true`, bei Bedarf `think: false`
@@ -58,28 +58,24 @@ Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 
 ### Ablauf
 
-**Modus „Ebenen“ (Standard)**: Das Vision-Modell zerlegt die Referenz in 2–5 Ebenen (Plan). Das Code-Modell schreibt
-jede Ebene einzeln (`candidates` Varianten), jede wird geprüft, im Gesamtbild mit der Referenz bewertet, die beste
-bleibt; schwache Ebenen werden einmal überarbeitet. Die App setzt die Ebenen nur zusammen (`js/ai/layers.js`).
-Modus „Ein Programm“ (`mode: "single"`) schreibt alles in einem Wurf.
+Ein Gespräch mit einem Modell, das Bilder lesen kann (z. B. `gemma4:12b-mlx`) – so, wie man einen Coding-Assistenten fragt:
 
-
-1. **Referenzbild** ablegen oder wählen (wird auf max. `maxImageSide` px verkleinert), optional Zusatzwünsche.
-2. **Analyse** (Vision-Modell, JSON-Schema): Farben, Formen, Muster, Komposition, Texturen, Bewegung, passende Techniken – als JSON bearbeitbar.
-3. **Prompt** aus fester, versionierter Vorlage (`js/ai/prompt.js`, aktuell `generator-v3`) – angezeigt und editierbar („Prompt erst prüfen“).
-   Kann das Code-Modell Bilder lesen, bekommt es die Referenz zusätzlich direkt zu sehen.
-4. **Code** (Code-Modell, Antwort `{"code": "…"}`), automatisch geprüft: Syntax, Vertrag, Parameter-Schema, Probe-Render,
-   leeres Bild, Extremwerte aller Regler. Bei Fehlern bis zu `repairAttempts` Reparaturen durch das Modell.
-5. **Bildvergleich** (`refineRounds`): Ein Einzelbild wird neben die Referenz gelegt (links „REFERENZ“, rechts „ERGEBNIS“);
-   das Vision-Modell bewertet die Ähnlichkeit (1–10) und nennt konkrete Unterschiede, das Code-Modell überarbeitet.
-   Übernommen wird eine Überarbeitung nur, wenn sie die Prüfung besteht und mindestens gleich gut bewertet wird.
+1. **Referenzbild** ablegen oder wählen (wird auf max. `maxImageSide` px verkleinert), optional Wünsche.
+2. **Prompt** aus fester, versionierter Vorlage (`js/ai/prompt.js`, aktuell `shader-v1`) – angezeigt und editierbar („Prompt erst prüfen“).
+3. Das Modell sieht das Bild, beschreibt zuerst selbst, was es sieht, plant, legt seine Regler fest und schreibt einen
+   **GLSL-Fragment-Shader** – alles in einer JSON-Antwort `{title, notes, params, shader}`.
+4. **Prüfung** in der Sandbox (Worker mit WebGL2): Regler-Schema, statische Regeln, Kompilieren (Fehlerzeilen bezogen
+   auf den Shader des Modells, mit der betroffenen Codezeile), Probe-Render bei mehreren `t`, einfarbiges Bild, Tempo,
+   Extremwerte aller Regler und ob jeder Regler sichtbar wirkt (Farbregler, die das Bild nicht färben, gehen als Fehler
+   zurück; nach einem erfolglosen Versuch wird der Shader mit Hinweis übernommen).
+   Fehler gehen ins selbe Gespräch zurück (bis zu `repairAttempts` Reparaturen).
+5. **Eigener Vergleich** (`refineRounds`): Das Modell sieht sein Ergebnis neben der Referenz (links „REFERENZ“, rechts
+   „ERGEBNIS“), schreibt die Unterschiede auf und verbessert.
 6. Speichern im Browser, Regler automatisch aus dem Schema; ohne „Prompt erst prüfen“ öffnet sich am Ende die Sandbox.
 
-**Bildqualität**: Im Generator stehen Zeichenhilfen bereit – `noise`, `fbm`, `loopNoise` (nahtlos loopendes Rauschen),
-`smoothPath` (weiche Kurven), `mix`/`rgba`/`shade` (Farben), `lerp`, `clamp`, `smoothstep`, `TAU`. Der Prompt enthält
-Qualitätsregeln (weiche Kurven statt Zickzack, viele feine halbtransparente Linien, Volumen über Verläufe, Tiefe).
-Die Qualität hängt trotzdem stark vom Code-Modell ab – Empfehlungen für 24 GB: `gpt-oss:20b` (Code), `devstral-small-2`
-(Code und Bild), `qwen3.5:9b-mlx` (Bildanalyse).
+Der Shader läuft danach in derselben WebGL-Pipeline wie Feuer und Grounddata: Finish, Bild-Ebene, Supersampling-Export,
+Video und nahtloser Loop funktionieren genauso. `maxTokens` hebt die Antwortlänge an (Ollamas MLX-Motor kappt sonst bei
+etwa 2048 Token). Die Qualität hängt stark vom Modell ab; lokale Modelle um 12 B treffen Aufbau und Farben oft nur grob.
 
 ### Konfiguration – `config.json` + Seite „KI“
 
@@ -89,11 +85,12 @@ Die Qualität hängt trotzdem stark vom Code-Modell ab – Empfehlungen für 24 
 |---|---|
 | `server` | `ollama`, `lmstudio`, `llamacpp`, `jan`, `vllm` oder `openai` (OpenAI-kompatibel) |
 | `url` | Adresse des KI-Servers mit Port |
-| `visionModel`, `codeModel` | Modell für Bildanalyse bzw. Code (exakte Namen, siehe `ollama list`) |
-| `temperature.vision/code/repair` | Temperaturen |
-| `numCtx.vision/code` | Kontextgröße (`num_ctx`, nur Ollama) |
+| `model` | Modell mit Bildverständnis (exakter Name, siehe `ollama list`) |
+| `temperature` | Temperatur (bei Reparaturen mindestens 0,6) |
+| `numCtx` | Kontextgröße (`num_ctx`, nur Ollama) |
+| `maxTokens` | maximale Antwortlänge (`num_predict` bzw. `max_tokens`) |
 | `think` | Denkmodus (aus = schneller) |
-| `timeouts.analysisSec/generationSec` | Zeitlimit pro Modellaufruf |
+| `timeouts.generationSec` | Zeitlimit pro Modellaufruf |
 | `timeouts.renderMs` | Zeitlimit pro Bild in der Sandbox (Watchdog gegen Endlosschleifen) |
 | `repairAttempts` | maximale Reparaturversuche |
 | `refineRounds` | Runden Bildvergleich + Überarbeitung (0 = aus) |
@@ -101,35 +98,39 @@ Die Qualität hängt trotzdem stark vom Code-Modell ab – Empfehlungen für 24 
 
 ### Generator-Vertrag
 
-```js
-const params = [                          // 8–16 Einträge
-  { id: "count", label: "Anzahl", type: "range", min: 1, max: 50, step: 1, default: 12, group: "Form" },
-  { id: "bg", label: "Hintergrund", type: "color", default: "#101018" },
-  { id: "shape", label: "Form", type: "select", options: ["Kreis", "Quadrat"], default: "Kreis" },
-  { id: "lines", label: "Linien", type: "toggle", default: true },
-  { id: "seed", label: "Seed", type: "seed", default: 7 }
-];
-function setup(ctx, p, rng) { … }          // optional, läuft bei Größen-/Parameteränderung
-function draw(ctx, p, t, rng) { … }        // ein komplettes Bild; t = 0..1, nahtloser Loop
+```json
+{
+  "title": "Tintentropfen",
+  "notes": "Sehe: … Plan: …",
+  "params": [
+    { "id": "count", "label": "Anzahl", "type": "range", "min": 1, "max": 12, "step": 1, "default": 6, "group": "Form" },
+    { "id": "ink", "label": "Tinte", "type": "color", "default": "#2ec4b6" },
+    { "id": "seed", "label": "Seed", "type": "seed", "default": 7 }
+  ],
+  "shader": "vec3 image(vec2 uv, vec2 p, float t) { … }"
+}
 ```
 
-Canvas 2D, Größen relativ zu `Math.min(W, H)`, Zufall nur über den geseedeten `rng` (deterministisch), keine Imports,
-kein DOM, kein Netzwerk.
+- `uv` 0..1, `p` zentriert und seitenrichtig, `t` Loop-Zeit 0..1, `uRes` Auflösung.
+- Jeder Regler ist eine Uniform `u_<id>`: `float` (range, seed, toggle 0/1, select = Index), `vec3` (color).
+- Vorhandene Helfer: `snoise`, `fbm`, `loopNoise`, `loopFbm`, `hash11`, `hash12`, `smin`, `rot`, `sdCircle`, `sdSegment`, `TAU`.
+- Keine Texturen, kein `while`, Schleifen nur mit fester Obergrenze (≤ 256).
+- Ältere Canvas-2D-Generatoren (`function draw(ctx, p, t, rng)`) aus früheren Versionen laufen weiter.
 
 ### Sicherheit
 
-Generierter Code läuft nie in der App selbst, sondern in einem `iframe sandbox="allow-scripts"` (leerer Ursprung,
+Shader werden vor dem Einsatz im Worker kompiliert und probegerendert. Generierter JavaScript-Code (ältere Generatoren) läuft nie in der App selbst, sondern in einem `iframe sandbox="allow-scripts"` (leerer Ursprung,
 CSP ohne Netzwerk) und dort in einem Worker mit OffscreenCanvas – ohne Zugriff auf DOM, Speicher oder Netzwerk der App.
 Hängt der Code, beendet der Watchdog den Worker nach `renderMs`; die App friert nicht ein. Laufzeitfehler erscheinen
 mit Zeilennummer im Viewport.
 
 ### Speichern, Presets, Export
 
-- Generatoren liegen im Browser (IndexedDB) mit Code, Parameter-Schema, Analyse, Prompt, Modellen, Datum, Vorlagen-Version und Thumbnail.
+- Generatoren liegen im Browser (IndexedDB) mit Shader, Parameter-Schema, Prompt, Modellen, Datum, Vorlagen-Version und Thumbnail.
   Über die Karten auf der Seite **KI**: als `.cg-generator.json` sichern bzw. **Importieren** (anderes Gerät/Browser).
 - Presets: in der Sandbox über **+** neben der Preset-Auswahl (pro Generator gespeichert).
-- Export: PNG/JPG in Format-Auflösung (inkl. Finish), **SVG** (Vektoren; nicht bei Pixelzugriff/Bildern), **Video** (MP4),
-  **Generator-Code** als `.js`.
+- Export: PNG/JPG in Format-Auflösung (inkl. Finish), **SVG** (nur ältere Canvas-Generatoren), **Video** (MP4),
+  **Shader-Code** als `.glsl`.
 - Alle bisherigen Funktionen und Designs bleiben unverändert.
 
 ## Tests
@@ -138,7 +139,7 @@ mit Zeilennummer im Viewport.
 python3 -m unittest tests/test_server.py -v     # Dateiserver
 ```
 
-- `http://localhost:8765/tests/index.html` – Unit-Tests: Parser, Prompt-Builder, Schema, Sandbox, Prüfung, Client (Ollama/OpenAI, Ausweichstufen, Fehler), Speicher
+- `http://localhost:8765/tests/index.html` – Unit-Tests: Parser, Prompt, Schema, Shader, Sandbox, Prüfung, Client (Ollama/OpenAI, Ausweichstufen, Fehler), Speicher
 - `http://localhost:8765/tests/e2e.html?run=1` – End-to-End gegen das echte lokale Ollama, über beide Schnittstellen (einige Minuten)
 
 ## Fehlerbehebung
@@ -152,5 +153,5 @@ python3 -m unittest tests/test_server.py -v     # Dateiserver
 | „Modell … ist nicht installiert“ | angezeigten `ollama pull …`-Befehl ausführen oder anderes Modell wählen |
 | „… kann keine Bilder lesen“ | Bild-Modell mit Vision-Fähigkeit wählen (z. B. `gemma4:12b-mlx`, `llama3.2-vision`) |
 | Zeitüberschreitung | `timeouts` erhöhen; beim ersten Aufruf lädt der Server das Modell erst |
-| Generator funktioniert nach den Reparaturen nicht | „Nochmal versuchen“, Prompt anpassen, stärkeres Code-Modell wählen; „Letzten Code“ lädt den letzten Stand herunter |
+| Generator funktioniert nach den Reparaturen nicht | „Nochmal versuchen“, Prompt anpassen, anderes Modell wählen |
 | Generator „hängt oder ist zu langsam“ | Regler mit hoher Anzahl verringern oder `timeouts.renderMs` erhöhen |

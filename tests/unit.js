@@ -105,46 +105,19 @@ describe('schema.toGroups / Werte', () => {
     assert.equal(vals.bg, '#112233');                         // fehlender Wert -> default
     assert.deepEqual(AI.schema.fromGenValues(v, { lines: true, count: 3 }), { g_count: 3, g_lines: 1 });
   });
-  it('cleanAnalysis ergänzt fehlende Felder', () => {
-    const a = AI.schema.cleanAnalysis({ title: 'X', colors: [{ hex: 'fff', role: 'bg' }, { hex: 'nope' }], techniques: ['noise', 'magic'] });
-    assert.deepEqual(a.colors, [{ hex: '#ffffff', role: 'bg' }]);
-    assert.deepEqual(a.techniques, ['noise']);
-    assert.ok(Array.isArray(a.shapes)); assert.equal(a.summary, '');
-  });
 });
 
 /* ---------- Prompt-Builder ---------- */
-describe('prompt', () => {
-  const analysis = AI.schema.cleanAnalysis({ title: 'Kreisringe', summary: 'Konzentrische Ringe', colors: [{ hex: '#14213d', role: 'Hintergrund' }, { hex: '#fca311', role: 'Akzent' }],
-    shapes: ['Kreise'], motion: 'langsames Pulsieren', techniques: ['circles'] });
-  const p = AI.prompt.build({ analysis, wishes: 'Geschwindigkeitsregler\nSVG-Export', format: { w: 1920, h: 1080 } });
-  it('enthält Analyse, Farben, Format und Wünsche', () => {
-    assert.match(p, /Kreisringe/); assert.match(p, /#14213d, #fca311/); assert.match(p, /1920 × 1080/);
-    assert.match(p, /Geschwindigkeitsregler/); assert.match(p, /langsames Pulsieren/);
-  });
-  it('enthält Vertrag und Beispiel', () => {
-    assert.match(p, /function draw\(ctx, p, t, rng\)/); assert.match(p, /LOOPS SEAMLESSLY/); assert.match(p, /```js\nconst params = \[/);
-  });
-  it('ohne Wünsche kein Wunsch-Abschnitt', () => assert.ok(!/Additional wishes/.test(AI.prompt.build({ analysis, wishes: '', format: null }))));
-  it('Reparatur-Prompt: Basis + Code + Fehler (konstante Länge)', () => {
-    const base = AI.prompt.messages(p);
-    const m = AI.prompt.repair(base, 'function draw(){}', ['Fehler A', 'Fehler B']);
-    assert.equal(m.length, 4); assert.equal(m[2].role, 'assistant'); assert.match(m[3].content, /- Fehler A\n- Fehler B/);
-  });
-  it('Version ist gesetzt', () => assert.match(AI.prompt.VERSION, /^generator-v\d+$/));
-  it('Analyse-Nachricht trägt das Bild', () => assert.deepEqual(AI.prompt.analysisMessages('QUJD')[1].images, ['QUJD']));
-});
-
 /* ---------- Sandbox & Prüfung ---------- */
 describe('sandbox + validate', () => {
   const box = new AI.Sandbox({ timeout: 2500 });
   it('Beispiel-Generator besteht die Prüfung', async () => {
-    const v = await AI.validate.run(AI.prompt.EXAMPLE, { sandbox: box, aspect: 16 / 9 });
+    const v = await AI.validate.run(CANVAS_EXAMPLE, { sandbox: box, aspect: 16 / 9 });
     assert.ok(v.ok, v.errors.join(';')); assert.equal(v.params.length, 12);
   });
   it('rendert deterministisch (gleicher Seed -> gleiches Bild)', async () => {
     const vals = { blades: 120, height: 0.55, width: 1.6, layers: 3, curl: 0.8, glow: true, sway: 0.45, flow: 1.2, bg: '#0b1a22', body: '#3fa37a', light: '#f4e9c8', seed: 7 };
-    await box.load(AI.prompt.EXAMPLE);
+    await box.load(CANVAS_EXAMPLE);
     const a = await box.render({ values: vals, t: 0.3, w: 64, h: 36, seed: 7, stats: true });
     const b = await box.render({ values: vals, t: 0.3, w: 64, h: 36, seed: 7, stats: true });
     a.bitmap.close(); b.bitmap.close();
@@ -162,7 +135,7 @@ describe('sandbox + validate', () => {
     const code = 'const params=[{id:"a",type:"range",min:0,max:1,step:0.1,default:0.5}];\nfunction draw(ctx){ while(1>0){} }';
     const v = await AI.validate.run(code, { sandbox: box, renderMs: 800 });
     assert.match(v.errors[0], /hängt/);
-    const ok = await AI.validate.run(AI.prompt.EXAMPLE, { sandbox: box });
+    const ok = await AI.validate.run(CANVAS_EXAMPLE, { sandbox: box });
     assert.ok(ok.ok, 'nach Timeout wieder nutzbar');
   });
   it('Laufzeitfehler mit Zeilennummer', async () => {
@@ -184,7 +157,7 @@ describe('sandbox + validate', () => {
     assert.equal(e.message, 'undefined,undefined,undefined,undefined');
   });
   it('SVG-Export zeichnet Vektoren', async () => {
-    await box.load(AI.prompt.EXAMPLE);
+    await box.load(CANVAS_EXAMPLE);
     const svg = await box.svg({ values: { blades: 10, height: 0.5, width: 2, layers: 2, curl: 0.5, glow: true, sway: 0.3, flow: 1, bg: '#000000', body: '#00ff00', light: '#ffffff', seed: 1 }, t: 0, w: 200, h: 100, seed: 1 });
     assert.match(svg, /^<svg[^>]+viewBox="0 0 200 100"/); assert.match(svg, /<path d="M/);
   });
@@ -336,67 +309,98 @@ function draw(ctx){ throw new Error(JSON.stringify(r)); }`);
     assert.equal(r[3], 'rgb(128,128,128)'); assert.equal(r[4], 'rgba(255,0,0,0.5)'); assert.equal(r[5], 'rgb(255,255,255)');
     assert.equal(r[6], 'function'); assert.ok(Math.abs(r[7] - Math.PI * 2) < 1e-12);
   });
-  it('Prompt v3 enthält Hilfen, Qualitätsregeln und Bildvergleich', () => {
-    assert.match(AI.prompt.CONTRACT, /smoothPath\(ctx, points, closed\)/);
-    assert.match(AI.prompt.CONTRACT, /QUALITY/);
-    const m = AI.prompt.reviewMessages('CMP', { title: 'X' });
-    assert.deepEqual(m[1].images, ['CMP']); assert.match(m[1].content, /LINKS[\s\S]*REFERENZ[\s\S]*RECHTS/);
-    assert.deepEqual(AI.prompt.messages('p', 'IMG')[1].images, ['IMG']);
-    assert.equal(AI.prompt.messages('p')[1].images, undefined);
-    const r = AI.prompt.refine([{ role: 'user', content: 'p' }], 'code', { score: 3, matches: [], problems: ['A'], improvements: ['B'] }, 'CMP');
-    assert.equal(r.length, 3); assert.deepEqual(r[2].images, ['CMP']); assert.match(r[2].content, /3\/10[\s\S]*- A[\s\S]*- B/);
-  });
 });
 
 /* ---------- Ebenen-Modus ---------- */
-describe('Ebenen', () => {
-  const box = new AI.Sandbox({ timeout: 3000 });
-  const plan = AI.schema.cleanPlan({ background: 'abc', layers: [
-    { id: 'Body Shape', name: 'Körper', what: 'Kapsel', where: 'Mitte', look: 'grün', motion: 'atmen', technique: 'Verlauf' },
-    { id: 'body', name: 'Härchen', what: 'feine Linien', where: 'Rand', look: 'weiß', motion: 'zittern', technique: 'smoothPath' },
-  ] });
-  it('Plan wird bereinigt (ids, Farbe, eindeutig)', () => {
-    assert.equal(plan.background, '#aabbcc');
-    assert.equal(plan.layers[0].id, 'bodyShape');
-    assert.equal(plan.layers[1].id, 'body');
-    assert.equal(AI.schema.cleanPlan({}, '#123456').background, '#123456');
+/* ---------- Modus „Direkt“ ---------- */
+describe('Sandbox-Größen', () => {
+  it('W, H, S stehen in setup() und draw() bereit', async () => {
+    const box = new AI.Sandbox({ timeout: 2500 });
+    await box.load(`const params = [];
+let v = null;
+function setup(ctx, p) { v = [W, H, S]; }
+function draw(ctx) { throw new Error(JSON.stringify([v, W, H, S])); }`);
+    const e = await T.assert.rejects(box.render({ values: {}, t: 0, w: 40, h: 30 }));
+    assert.equal(e.message, '[[40,30,30],40,30,30]');
+    box.destroy();
   });
-  const body = `const params = [{ id: "size", label: "Größe", type: "range", min: 0.1, max: 0.6, step: 0.01, default: 0.3 }, { id: "color", label: "Farbe", type: "color", default: "#55aa55" }];
-function draw(ctx, p, t) { const S = Math.min(ctx.canvas.width, ctx.canvas.height); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(ctx.canvas.width / 2, ctx.canvas.height / 2, S * p.size * (1 + 0.05 * Math.sin(TAU * t * p.speed)), 0, TAU); ctx.fill(); }`;
-  const hairs = `const params = [{ id: "count", label: "Anzahl", type: "range", min: 10, max: 500, step: 1, default: 120 }, { id: "color", label: "Farbe", type: "color", default: "#ffffff" }];
-let pts = [];
-function setup(ctx, p, rng) { pts = []; for (let i = 0; i < p.count; i++) pts.push(rng()); }
-function draw(ctx, p, t) { const W = ctx.canvas.width, H = ctx.canvas.height; ctx.strokeStyle = p.color; for (const u of pts) { ctx.beginPath(); ctx.moveTo(W * u, H * 0.2); ctx.lineTo(W * u, H * 0.3); ctx.stroke(); } }`;
-  it('Zusammensetzen: Regler mit Präfix, globale Regler, gültiger Generator', async () => {
-    const asm = AI.layers.assemble(plan, [{ id: 'bodyShape', name: 'Körper', code: body }, { id: 'body', name: 'Härchen', code: hairs }]);
-    const v = await AI.validate.run(asm.code, { sandbox: box, aspect: 16 / 9 });
-    assert.ok(v.ok, v.errors.join(' | '));
-    const ids = v.params.map(p => p.id);
-    assert.deepEqual(ids.slice(0, 3), ['bg', 'speed', 'seed']);
-    assert.includes(ids, 'bodyShape_size'); assert.includes(ids, 'body_count'); assert.includes(ids, 'body_color');
-    assert.equal(v.params.find(p => p.id === 'body_color').label, 'Härchen Farbe');
-    assert.equal(v.params.find(p => p.id === 'bg').default, '#aabbcc');
+});
+
+/* ---------- Prompt (ein Gespräch, Shader) ---------- */
+describe('Prompt', () => {
+  it('Auftrag: Wunsch, Format, eigene Regler, Shader-Regeln, Beispiel', () => {
+    const t = AI.prompt.text({ wishes: 'die Blops bewegen sich', format: { w: 2480, h: 3508 } });
+    assert.match(t, /die Blops bewegen sich/); assert.match(t, /Hochformat/);
+    assert.match(t, /the controls you think make sense/); assert.match(t, /vec3 image\(vec2 uv, vec2 p, float t\)/);
+    assert.match(t, /u_<id>/); assert.match(t, /"shader": "vec3 image/);
+    assert.match(AI.prompt.VERSION, /^shader-v\d+$/);
   });
-  it('Ebenen sind voneinander getrennt (gleiche Namen kollidieren nicht)', async () => {
-    const asm = AI.layers.assemble(plan, [{ id: 'a', name: 'A', code: body }, { id: 'b', name: 'B', code: body.replace('#55aa55', '#ff0000') }]);
-    assert.ok((await AI.validate.run(asm.code, { sandbox: box })).ok);
+  it('Nachrichten: Bild am Auftrag, nächste Runde mit Vergleichsbild oder Fehlerliste', () => {
+    const base = AI.prompt.messages('T', 'IMG');
+    assert.equal(base.length, 2); assert.deepEqual(base[1].images, ['IMG']);
+    const a = { title: 'X', notes: 'n', params: [], shader: 's' };
+    const look = AI.prompt.feedback(base, a, { compareBase64: 'CMP' });
+    assert.equal(look.length, 4); assert.deepEqual(look[3].images, ['CMP']); assert.match(look[3].content, /LEFT = the reference/);
+    const err = AI.prompt.feedback(base, a, { errors: ['Fehler A'], compareBase64: 'CMP' });
+    assert.equal(err[3].images, undefined); assert.match(err[3].content, /- Fehler A/);
   });
-  it('Fehlerzeilen werden auf die Ebene umgerechnet', async () => {
-    const broken = 'const params = [];\nfunction draw(ctx) {\n  ctx.fillRect(0, 0, 9, 9);\n  nichtDa();\n}';
-    const asm = AI.layers.assemble(plan, [{ id: 'bodyShape', name: 'Körper', code: body }, { id: 'x', name: 'X', code: broken }]);
-    const v = await AI.validate.run(asm.code, { sandbox: box });
-    const loc = AI.layers.localizeErrors(v.errors, asm.ranges[1]);
-    assert.match(loc[0], /Zeile 4 deiner Ebene/);
+  it('Antwort-Schema verlangt Titel, Beobachtung, Regler, Shader', () => {
+    assert.deepEqual(AI.schema.SHADER.required, ['title', 'notes', 'params', 'shader']);
   });
-  it('Ebenen-Prompt: Plan, markierte Ebene, Vertrag, Bild', () => {
-    const m = AI.prompt.layerMessages('BRIEF', plan, 1, 'IMG');
-    assert.match(m[1].content, /2\. Härchen \(body\).*YOU WRITE THIS LAYER/);
-    assert.match(m[1].content, /1\. Körper.*already done/);
-    assert.match(m[1].content, /Do NOT fill or clear the background/);
-    assert.deepEqual(m[1].images, ['IMG']);
-    const pm = AI.prompt.planMessages('BRIEF', 'IMG');
-    assert.match(pm[1].content, /2–5 Ebenen/); assert.deepEqual(pm[1].images, ['IMG']);
-    const r = AI.prompt.layerReviewMessages('CMP', plan, 0);
-    assert.match(r[1].content, /„Körper“/); assert.match(r[1].content, /NICHT/);
+});
+
+/* ---------- Shader ---------- */
+describe('Shader', () => {
+  const box = new AI.Sandbox({ timeout: 4000 });
+  const ex = JSON.parse(AI.prompt.EXAMPLE);
+  it('Beispiel aus dem Prompt besteht die Prüfung', async () => {
+    const v = await AI.validate.runShader(ex.params, ex.shader, { sandbox: box, aspect: 16 / 9 });
+    assert.ok(v.ok, v.errors.join(' | ')); assert.equal(v.params.length, 6);
+  });
+  it('GLSL-Fehler mit Zeile des Modell-Shaders', async () => {
+    const code = 'vec3 image(vec2 uv, vec2 p, float t) {\n  float a = 1.0;\n  return vec3(a, b, 0.0);\n}';
+    const v = await AI.validate.runShader([{ id: 'seed', label: 'Seed', type: 'seed', default: 1 }], code, { sandbox: box });
+    assert.match(v.errors[0], /GLSL-Fehler – Zeile 3:.*'b'/);
+    assert.match(v.errors[0], /→  return vec3\(a, b, 0\.0\);/);
+  });
+  it('Schleifen ohne feste Obergrenze, Texturen, eigene Uniforms werden abgelehnt', () => {
+    const S = AI.shader.staticCheck;
+    assert.match(S('vec3 image(vec2 uv, vec2 p, float t){ for (int i = 0; i < int(u_n); i++) {} return vec3(0.0); }')[0], /feste Zahl/);
+    assert.match(S('vec3 image(vec2 uv, vec2 p, float t){ while (true) {} return vec3(0.0); }')[0], /while/);
+    assert.match(S('uniform float u_x; vec3 image(vec2 uv, vec2 p, float t){ return texture(x, uv).rgb; }').join(' '), /Texturen/);
+    assert.equal(S('vec3 image(vec2 uv, vec2 p, float t){ for (int i = 0; i < 32; i++) {} return vec3(0.0); }').length, 0);
+    assert.match(S('vec4 image(vec2 uv){ return vec4(0.0); }')[0], /vec3 image/);
+  });
+  it('Einfarbiges Bild wird erkannt', async () => {
+    const v = await AI.validate.runShader([{ id: 'c', label: 'C', type: 'color', default: '#336699' }], 'vec3 image(vec2 uv, vec2 p, float t) { return u_c; }', { sandbox: box });
+    assert.match(v.errors[0], /einfarbig/);
+  });
+  it('Farbregler ohne Wirkung (nur Schwarz/Weiß) werden als Fehler gemeldet', async () => {
+    const params = [
+      { id: 'amber', label: 'Bernstein', type: 'color', default: '#c06010' },
+      { id: 'size', label: 'Größe', type: 'range', min: 0.1, max: 0.5, step: 0.01, default: 0.3 },
+      { id: 'seed', label: 'Seed', type: 'seed', default: 1 }];
+    const bw = 'vec3 image(vec2 uv, vec2 p, float t) { float m = step(length(p + 0.05 * sin(TAU * t)), u_size); return vec3(m); }';
+    const v = await AI.validate.runShader(params, bw, { sandbox: box, aspect: 16 / 9 });
+    assert.equal(v.ok, false); assert.match(v.errors.join(' '), /Farbe „Bernstein“ \(u_amber\) hat keine sichtbare Wirkung/);
+    const ok = await AI.validate.runShader(params, bw.replace('return vec3(m);', 'return mix(vec3(0.95), u_amber, m);'), { sandbox: box, aspect: 16 / 9 });
+    assert.ok(ok.ok, ok.errors.join(' | '));
+  });
+  it('Regler werden zu Uniforms (Farbe vec3, Auswahl als Index, Schalter 0/1)', async () => {
+    const params = AI.schema.validateParams([
+      { id: 'c', label: 'Farbe', type: 'color', default: '#ff0000' },
+      { id: 'mode', label: 'Modus', type: 'select', options: ['A', 'B', 'C'], default: 'C' },
+      { id: 'on', label: 'An', type: 'toggle', default: true }]).params;
+    assert.deepEqual(AI.shader.uniforms(params, {}), [['u_c', 'vec3', [1, 0, 0]], ['u_mode', 'float', 2], ['u_on', 'float', 1]]);
+    const code = 'vec3 image(vec2 uv, vec2 p, float t) { return uv.x < 0.5 ? u_c * u_on : vec3(u_mode / 2.0); }';
+    const r = await box.shader({ frag: AI.shader.source(params, code), uniforms: AI.shader.uniforms(params, {}), t: 0, w: 8, h: 4, stats: true });
+    r.bitmap.close();
+    assert.ok(r.stats.nonUniform > 0.3);
+    const g = AI.schema.toGroups('ai-x', params, true).flatMap(x => x.params);
+    assert.equal(g.find(p => p.genId === 'mode').u, 'u_mode'); assert.equal(g.find(p => p.genId === 'mode').map('B'), 1);
+  });
+  it('Shader aus Zaun/Freitext wird herausgelöst', () => {
+    assert.equal(AI.parse.extractShader('vec3 image(vec2 uv, vec2 p, float t) {\\n  return vec3(1.0);\\n}'), 'vec3 image(vec2 uv, vec2 p, float t) {\n  return vec3(1.0);\n}\n');
+    assert.match(AI.parse.extractShader('```glsl\n#version 300 es\nvec3 image(vec2 uv, vec2 p, float t){ return vec3(1.0); }\n```'), /^vec3 image/);
   });
 });

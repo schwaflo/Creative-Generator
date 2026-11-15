@@ -92,10 +92,8 @@ CG.ai.client = (() => {
       const names = out.models.map(m => m.name);
       const has = n => names.includes(n) || names.includes(n + ':latest');
       const c = CG.ai.config;
-      for (const role of ['visionModel', 'codeModel']) {
-        const m = c[role];
-        if (m && !has(m) && !out.missing.some(x => x.model === m)) out.missing.push({ role, model: m, cmd: api === 'ollama' ? 'ollama pull ' + m : null });
-      }
+      const m = c.model;
+      if (m && !has(m)) out.missing.push({ model: m, cmd: api === 'ollama' ? 'ollama pull ' + m : null });
     } catch (e) { out.error = e; }
     return out;
   }
@@ -127,6 +125,7 @@ CG.ai.client = (() => {
     const body = { model: o.model, messages: o.messages, stream: true, options: {} };
     if (o.temperature !== undefined) body.options.temperature = o.temperature;
     if (o.numCtx) body.options.num_ctx = o.numCtx;
+    if (o.maxTokens) body.options.num_predict = o.maxTokens;      // sonst kappen manche Motoren (MLX) bei ~2048 Token
     if (o.keepAlive !== undefined) body.keep_alive = o.keepAlive;
     if (o.think !== undefined) body.think = o.think;
     let useFormat = !!o.schema && levels[levelKey(o.model)] !== 'text';
@@ -164,6 +163,7 @@ CG.ai.client = (() => {
       const level = order[i];
       const body = { model: o.model, stream: true, messages: level === 'text' && o.schema ? withHint(messages, o.schema) : level === 'json_object' ? withHint(messages, o.schema) : messages };
       if (o.temperature !== undefined) body.temperature = o.temperature;
+      if (o.maxTokens) body.max_tokens = o.maxTokens;
       if (noThink) body.reasoning_effort = 'none';
       if (level === 'json_schema') body.response_format = { type: 'json_schema', json_schema: { name: o.schemaName || 'antwort', strict: true, schema: o.schema } };
       if (level === 'json_object') body.response_format = { type: 'json_object' };

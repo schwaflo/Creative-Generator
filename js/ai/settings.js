@@ -20,30 +20,30 @@ CG.ai.settings = (() => {
   const DEFAULTS = {
     server: 'ollama',
     url: 'http://localhost:11434',
-    visionModel: 'gemma4:12b-mlx',
-    codeModel: 'gemma4:12b-mlx',
-    temperature: { vision: 0.2, code: 0.4, repair: 0.2 },
-    numCtx: { vision: 4096, code: 12288 },
+    model: 'gemma4:12b-mlx',                 // muss Bilder lesen können
+    temperature: 0.4,
+    numCtx: 16384,
+    maxTokens: 8192,                         // Ollamas MLX-Motor kappt sonst bei ~2048 Token
     think: false,
-    timeouts: { analysisSec: 240, generationSec: 900, renderMs: 4000 },
+    timeouts: { generationSec: 900, renderMs: 4000 },
     repairAttempts: 3,
     refineRounds: 2,
-    mode: 'layers',
-    candidates: 2,
     maxImageSide: 1024,
   };
 
   const merge = (a, b) => {
     const o = { ...a };
     for (const k in b || {}) {
-      if (!(k in a)) continue;
+      if (!(k in a) || typeof b[k] !== typeof a[k]) continue;     // unbekannte oder veraltete Einträge (z. B. alte Objekt-Werte) ignorieren
       o[k] = a[k] && typeof a[k] === 'object' && !Array.isArray(a[k]) && b[k] && typeof b[k] === 'object' ? merge(a[k], b[k]) : b[k];
     }
     return o;
   };
 
   let base = DEFAULTS;                              // DEFAULTS + config.json
-  let cfg = merge(base, store.get('ai.settings', {}));
+  // ältere Einstellungen dieses Browsers (getrennte Modelle) übernehmen
+  const own = () => { const o = store.get('ai.settings', {}) || {}; if (!o.model && o.codeModel) o.model = o.codeModel; return o; };
+  let cfg = merge(base, own());
 
   // config.json laden (falls vorhanden), danach gelten lokale Änderungen weiter
   async function load() {
@@ -52,19 +52,20 @@ CG.ai.settings = (() => {
       if (r.ok) {
         const j = await r.json();
         if (j.ollamaUrl && !j.url) j.url = j.ollamaUrl;     // ältere config.json
+        if (j.codeModel && !j.model) j.model = j.codeModel;
         base = merge(DEFAULTS, j);
       }
     } catch (e) { /* ohne config.json: eingebaute Vorgaben */ }
-    cfg = merge(base, store.get('ai.settings', {}));
+    cfg = merge(base, own());
     CG.ai.config = cfg;
     return cfg;
   }
 
   // Änderungen dieses Browsers speichern (nur Abweichungen relevant)
   function set(patch) {
-    const own = { ...store.get('ai.settings', {}), ...patch };
-    store.set('ai.settings', own);
-    cfg = merge(base, own);
+    const next = { ...own(), ...patch };
+    store.set('ai.settings', next);
+    cfg = merge(base, next);
     CG.ai.config = cfg;
     return cfg;
   }

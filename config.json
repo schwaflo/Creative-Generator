@@ -1,15 +1,13 @@
 {
   "server": "ollama",
   "url": "http://localhost:11434",
-  "visionModel": "gemma4:12b-mlx",
-  "codeModel": "gemma4:12b-mlx",
-  "temperature": { "vision": 0.2, "code": 0.4, "repair": 0.2 },
-  "numCtx": { "vision": 4096, "code": 12288 },
+  "model": "gemma4:12b-mlx",
+  "temperature": 0.4,
+  "numCtx": 16384,
+  "maxTokens": 8192,
   "think": false,
-  "timeouts": { "analysisSec": 240, "generationSec": 900, "renderMs": 4000 },
+  "timeouts": { "generationSec": 900, "renderMs": 4000 },
   "repairAttempts": 3,
   "refineRounds": 2,
-  "mode": "layers",
-  "candidates": 2,
   "maxImageSide": 1024
 }

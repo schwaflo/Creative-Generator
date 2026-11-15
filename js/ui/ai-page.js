@@ -1,12 +1,13 @@
 'use strict';
-/* Seite „KI“: Referenzbild -> Analyse -> Prompt -> Generator.
+/* Seite „KI“: Referenzbild + Wunsch -> Shader-Generator.
+   Ein Gespräch mit einem Modell, das Bilder lesen kann (sehen, planen, Shader schreiben, selbst vergleichen).
    Der Browser spricht direkt mit dem KI-Server (Ollama oder OpenAI-kompatibel) – kein Server dazwischen. */
 CG.aiPage = (() => {
   const { el, esc, toast, store } = CG.util;
   const H = CG.haptics;
   const AI = () => CG.ai;
   let R = null;                                  // DOM-Referenzen
-  const S = { image: null, imageName: '', analysis: null, prompt: '', promptDirty: false, run: null, health: null, last: null };
+  const S = { image: null, imageName: '', prompt: '', promptDirty: false, run: null, health: null };
 
   /* ---------- Aufbau ---------- */
   function init() {
@@ -23,8 +24,7 @@ CG.aiPage = (() => {
         <div class="pill ai-status">
           <span class="dot"></span><span class="st-text">Nicht verbunden</span>
           <span class="spacer"></span>
-          <label class="m-pick" title="Modell für die Bildanalyse"><span>Bild</span><select data-m="visionModel"></select></label>
-          <label class="m-pick" title="Modell für den Code"><span>Code</span><select data-m="codeModel"></select></label>
+          <label class="m-pick" title="Modell (muss Bilder lesen können)"><span>Modell</span><select data-m="model"></select></label>
         </div>
         <div class="ai-hint" hidden></div>
       </div>
@@ -43,17 +43,9 @@ CG.aiPage = (() => {
           </div>
         </section>
         <section class="ai-card">
-          <header><span class="num">2</span><h3>Analyse</h3>
-            <button class="act" type="button" data-a="json" title="Als JSON bearbeiten">{ }</button>
-            <button class="act" type="button" data-a="analyze" title="Erneut analysieren">${CG.icon('refresh')}</button></header>
-          <div class="ana"><div class="ai-empty">Noch keine Analyse</div></div>
-          <textarea class="ai-text ana-json" spellcheck="false" hidden></textarea>
-        </section>
-        <section class="ai-card">
-          <header><span class="num">3</span><h3>Prompt</h3>
-            <div class="seg seg-sm ai-mode"><button type="button" data-mode="layers" title="Plan, dann Ebene für Ebene mit Varianten und Bewertung">Ebenen</button><button type="button" data-mode="single" title="Ein komplettes Programm in einem Wurf">Ein Programm</button></div>
-            <button class="act" type="button" data-a="rebuild" title="Aus Analyse neu aufbauen">${CG.icon('reset')}</button></header>
-          <textarea class="ai-text ai-prompt" spellcheck="false" placeholder="Wird aus der Analyse erzeugt"></textarea>
+          <header><span class="num">2</span><h3>Prompt</h3>
+            <button class="act" type="button" data-a="rebuild" title="Zurücksetzen">${CG.icon('reset')}</button></header>
+          <textarea class="ai-text ai-prompt" spellcheck="false" placeholder="Entsteht, sobald ein Bild gewählt ist"></textarea>
           <div class="ai-row"><span class="meta-line prompt-meta"></span><button class="btn" type="button" data-a="send">Senden</button></div>
         </section>
       </div>
@@ -71,9 +63,9 @@ CG.aiPage = (() => {
 
     const q = s => root.querySelector(s);
     R = { root, status: q('.ai-status'), dot: q('.dot'), stText: q('.st-text'), hint: q('.ai-hint'),
-      vSel: q('[data-m=visionModel]'), cSel: q('[data-m=codeModel]'),
+      mSel: q('[data-m=model]'),
       drop: q('.drop'), img: q('.drop img'), file: q('.drop input'), wishes: q('.ai-wishes'), review: q('[data-a=review]'),
-      go: q('[data-a=go]'), send: q('[data-a=send]'), ana: q('.ana'), anaJson: q('.ana-json'), prompt: q('.ai-prompt'),
+      go: q('[data-a=go]'), send: q('[data-a=send]'), prompt: q('.ai-prompt'),
       promptMeta: q('.prompt-meta'), run: q('.ai-run'), runTitle: q('.run-title'), runMeta: q('.run-meta'), bar: q('.run-bar i'),
       log: q('.run-log'), result: q('.run-result'), cancel: q('[data-a=cancel]'), grid: q('.gen-grid'),
       server: q('[data-c=server]'), url: q('[data-c=url]'), key: q('[data-c=key]') };
@@ -97,15 +89,8 @@ CG.aiPage = (() => {
 
     R.prompt.addEventListener('input', () => { S.prompt = R.prompt.value; S.promptDirty = true; promptMeta(); });
     q('[data-a=rebuild]').onclick = () => { S.promptDirty = false; rebuildPrompt(); H.tick(); };
-    q('[data-a=analyze]').onclick = () => runFlow({ analyze: true, generate: false });
-    q('[data-a=json]').onclick = () => toggleJson();
-    R.anaJson.addEventListener('change', () => {
-      const j = AI().parse.extractJson(R.anaJson.value);
-      if (!j) return toast('Kein gültiges JSON');
-      S.analysis = AI().schema.cleanAnalysis(j); renderAnalysis(); if (!S.promptDirty) rebuildPrompt();
-    });
-    R.go.onclick = () => runFlow({ analyze: !S.analysis, generate: !R.review.checked });
-    R.send.onclick = () => runFlow({ analyze: false, generate: true });
+    R.go.onclick = () => runFlow(!R.review.checked);
+    R.send.onclick = () => runFlow(true);
     R.cancel.onclick = () => { if (S.run) S.run.abort(); };
     // Verbindung: Server, Adresse, Schlüssel (nur in diesem Browser)
     const st = AI().settings;
@@ -120,7 +105,7 @@ CG.aiPage = (() => {
     R.url.addEventListener('keydown', e => { if (e.key === 'Enter') { st.set({ url: R.url.value.trim() }); refreshHealth(true); } });
     R.key.addEventListener('change', () => st.setKey(R.key.value));
     q('[data-a=connect]').onclick = () => { st.set({ url: R.url.value.trim() }); st.setKey(R.key.value); refreshHealth(true); };
-    for (const sel of [R.vSel, R.cSel]) sel.addEventListener('change', () => { st.set({ [sel.dataset.m]: sel.value }); H.tick(); refreshHealth(); });
+    R.mSel.addEventListener('change', () => { st.set({ model: R.mSel.value }); H.tick(); refreshHealth(); });
     // Generatoren importieren
     const imp = q('[data-a=importFile]');
     q('[data-a=import]').onclick = () => imp.click();
@@ -132,15 +117,6 @@ CG.aiPage = (() => {
       }
       imp.value = '';
       if (n) { renderLibrary(); CG.panel.build(); toast(`${n} Generator(en) importiert`); }
-    });
-    // Modus: Ebenen (Plan -> Ebene für Ebene) oder ein Programm in einem Wurf
-    const modeBtns = q('.ai-mode').querySelectorAll('button');
-    const setMode = m => modeBtns.forEach(b => b.classList.toggle('on', b.dataset.mode === m));
-    setMode(AI().config.mode || 'layers');
-    modeBtns.forEach(b => b.onclick = () => {
-      if (AI().config.mode === b.dataset.mode) return;
-      AI().settings.set({ mode: b.dataset.mode }); setMode(b.dataset.mode); H.tick();
-      if (!S.promptDirty) rebuildPrompt();
     });
     promptMeta();
   }
@@ -180,12 +156,12 @@ CG.aiPage = (() => {
     R.dot.className = 'dot ' + (h.missing.length ? 'warn' : 'ok');
     const loaded = h.loaded == null ? '' : h.loaded.length ? ` · geladen: ${h.loaded.map(esc).join(', ')}` : ' · kein Modell geladen';
     R.stText.innerHTML = `${esc(srv.label)}${h.version ? ' ' + esc(h.version) : ''} · ${h.models.length} Modelle${loaded}`;
-    const vis = h.models.find(m => m.name === cfg.visionModel);
+    const vis = h.models.find(m => m.name === cfg.model);
     if (h.missing.length) {
       const cmds = h.missing.map(m => m.cmd).filter(Boolean);
       hint(cmds.length ? 'Fehlende Modelle installieren:' : `Modell nicht auf dem Server: ${h.missing.map(m => '„' + esc(m.model) + '“').join(', ')}. Bitte oben ein vorhandenes Modell wählen oder es im Server laden.`, cmds);
     } else if (vis && Array.isArray(vis.capabilities) && !vis.capabilities.includes('vision')) {
-      hint(`„${esc(cfg.visionModel)}“ kann keine Bilder lesen. Wähle ein Bild-Modell oder installiere eines:`, ['ollama pull llama3.2-vision']);
+      hint(`„${esc(cfg.model)}“ kann keine Bilder lesen. Wähle ein Modell mit Bildverständnis oder installiere eines:`, ['ollama pull gemma4:12b-mlx']);
     } else if (srv.api === 'openai' && /:11434$/.test(url)) {
       hint('Das ist Ollama. Mit dem Server-Typ „Ollama“ stehen Kontextgröße (num_ctx) und das automatische Entladen der Modelle zur Verfügung – über die OpenAI-Schnittstelle nutzt Ollama nur 4096 Token Kontext.');
     } else hint(null);
@@ -227,8 +203,7 @@ CG.aiPage = (() => {
         return `<option value="${esc(n)}">${esc(n)}${m ? (vis ? ' · Bild' : '') : (h.models.length ? ' (fehlt)' : '')}</option>`;
       }).join('');
     };
-    R.vSel.innerHTML = opts(cfg.visionModel); R.vSel.value = cfg.visionModel || '';
-    R.cSel.innerHTML = opts(cfg.codeModel); R.cSel.value = cfg.codeModel || '';
+    R.mSel.innerHTML = opts(cfg.model); R.mSel.value = cfg.model || '';
   }
 
   function hint(html, cmds) {
@@ -248,41 +223,16 @@ CG.aiPage = (() => {
       S.imageName = file.name;
       R.img.src = S.image.dataUrl; R.img.hidden = false;
       R.drop.classList.add('has');
-      S.analysis = null; renderAnalysis();
       S.promptDirty = false; rebuildPrompt();
       H.tick();
     } catch (e) { toast('Bild konnte nicht gelesen werden'); }
   }
 
-  /* ---------- Analyse ---------- */
-  const FIELDS = [['shapes', 'Formen'], ['geometry', 'Geometrie'], ['patterns', 'Muster'], ['repetition', 'Wiederholung'], ['symmetry', 'Symmetrie'],
-    ['composition', 'Komposition'], ['density', 'Dichte'], ['rhythm', 'Rhythmus'], ['depth', 'Tiefe'], ['textures', 'Texturen'],
-    ['lineQuality', 'Linien'], ['contrast', 'Kontrast'], ['motion', 'Bewegung'], ['mood', 'Stimmung']];
-
-  function renderAnalysis() {
-    const a = S.analysis;
-    R.anaJson.value = a ? JSON.stringify(a, null, 2) : '';
-    if (!a) { R.ana.innerHTML = '<div class="ai-empty">Noch keine Analyse</div>'; return; }
-    const v = x => Array.isArray(x) ? x.join(', ') : x;
-    R.ana.innerHTML = `
-      <div class="ana-title">${esc(a.title)}</div>
-      <div class="swatches">${a.colors.map(c => `<span style="background:${esc(c.hex)}" title="${esc(c.hex)} · ${esc(c.role)}"></span>`).join('')}
-        <em>${esc(a.colorMood)}</em></div>
-      <p class="ana-sum">${esc(a.summary)}</p>
-      <div class="chips-t">${a.techniques.map(t => `<span>${esc(t)}</span>`).join('')}</div>
-      <dl class="ana-dl">${FIELDS.filter(([k]) => a[k] && v(a[k])).map(([k, l]) => `<dt>${l}</dt><dd>${esc(v(a[k]))}</dd>`).join('')}</dl>`;
-  }
-
-  function toggleJson() {
-    const on = R.anaJson.hidden;
-    R.anaJson.hidden = !on; R.ana.hidden = on;
-  }
 
   /* ---------- Prompt ---------- */
   function rebuildPrompt() {
     if (!R) return;
-    const args = { analysis: S.analysis, wishes: R.wishes.value, format: CG.state.format };
-    S.prompt = S.analysis ? (AI().config.mode === 'single' ? AI().prompt.build(args) : AI().prompt.brief(args)) : '';
+    S.prompt = S.image ? AI().prompt.text({ wishes: R.wishes.value, format: CG.state.format }) : '';
     R.prompt.value = S.prompt;
     promptMeta();
   }
@@ -323,106 +273,69 @@ CG.aiPage = (() => {
     refreshHealth();
   }
 
-  async function runFlow({ analyze, generate }) {
+  async function runFlow(generate) {
     if (S.run) return;
-    if (analyze && !S.image) { toast('Zuerst ein Referenzbild wählen'); R.drop.focus(); return; }
-    if (!analyze && generate && !(R.prompt.value || '').trim()) { toast('Prompt ist leer'); return; }
+    if (!S.image) { toast('Zuerst ein Referenzbild wählen'); R.drop.focus(); return; }
+    if (!generate) {                                       // „Prompt erst prüfen“
+      R.prompt.focus(); toast('Prompt prüfen und „Senden“ wählen'); return;
+    }
+    if (!(R.prompt.value || '').trim()) { toast('Prompt ist leer'); return; }
     const ok = await refreshHealth();
     if (!S.health || !S.health.ok) { toast('Keine Verbindung zum KI-Server'); return; }
-    if (!ok) { toast('Ein ausgewähltes Modell ist nicht verfügbar'); return; }
+    if (!ok) { toast('Das gewählte Modell ist nicht verfügbar'); return; }
 
-    const signal = startRun(analyze ? 'Bildanalyse' : 'Generator');
-    S.last = { analyze, generate };
+    const signal = startRun('Generator');
+    const model = AI().config.model;
     try {
-      if (analyze) {
-        const li = logItem(`Analysiere „${S.imageName}“ mit ${AI().config.visionModel} …`, 'act');
-        S.analysis = await AI().pipeline.analyze(S.image.base64, { signal, onTokens: n => meta(`${n} Tokens`) });
-        setLi(li, `Analyse fertig: ${S.analysis.title}`, 'ok');
-        renderAnalysis();
-        if (!S.promptDirty) rebuildPrompt();
-        logItem('Prompt erstellt (' + AI().prompt.VERSION + ')', 'ok');
-        if (AI().config.visionModel !== AI().config.codeModel && AI().settings.api() === 'ollama') logItem(`${AI().config.visionModel} entladen`, 'ok');
-      }
-      if (!generate) {
-        R.runTitle.textContent = 'Bereit';
-        logItem('Prompt prüfen und „Senden“ wählen', 'note');
-        endRun('done');
-        R.prompt.focus();
-        return;
-      }
-      R.runTitle.textContent = 'Generator';
       const promptText = R.prompt.value;
-      let reqLi = null, stepLi = null;
-      let revLi = null;
-      const layered = AI().config.mode !== 'single';
-      let candLi = null;
-      const res = await AI().pipeline[layered ? 'generateLayers' : 'generate'](promptText, {
-        signal, aspect: CG.state.format.w / CG.state.format.h,
-        reference: S.image ? S.image.base64 : null, analysis: S.analysis,
+      let askLi = null, stepLi = null;
+      const res = await AI().pipeline.generate(promptText, {
+        signal, aspect: CG.state.format.w / CG.state.format.h, reference: S.image.base64,
         onEvent: ev => {
-          // Ebenen-Modus
-          if (ev.type === 'plan') { reqLi = logItem(`Plane Ebenen (${AI().config.visionModel}) …`, 'act'); meta(''); }
-          if (ev.type === 'planned') {
-            setLi(reqLi, `Plan: ${ev.plan.layers.map(x => x.name).join(' → ')}`, 'ok');
-            const li = logItem('', 'note'); li.innerHTML = `<ul class="rev">${ev.plan.layers.map(x => `<li><b>${esc(x.name)}</b>: ${esc(x.what)}</li>`).join('')}</ul>`;
+          if (ev.type === 'ask') {
+            askLi = logItem(ev.fixing ? 'Fehler werden behoben …' : ev.round ? `Runde ${ev.round + 1}/${ev.rounds}: verbessert nach eigenem Vergleich …` : `${model} sieht das Bild, plant und schreibt den Shader …`, 'act');
+            stepLi = null; meta('');
           }
-          if (ev.type === 'layer') { reqLi = logItem(`Ebene ${ev.index + 1}/${ev.total}: ${ev.layer.name}`, 'act'); meta(''); }
-          if (ev.type === 'candidate') { candLi = logItem(`Variante ${ev.k + 1}/${ev.n} wird geschrieben …`, 'act'); meta(''); }
-          if (ev.type === 'layer-fix' && candLi) setLi(candLi, 'Variante wird repariert …', 'act');
-          if (ev.type === 'candidate-done' && candLi) setLi(candLi, ev.ok ? `Variante ${ev.k + 1}: ${ev.score}/10` : `Variante ${ev.k + 1}: verworfen (${(ev.errors && ev.errors[0] || '').slice(0, 90)})`, ev.ok ? 'ok' : 'note');
-          if (ev.type === 'layer-refine') candLi = logItem(`Überarbeitung der Ebene (${ev.score}/10) …`, 'act');
-          if (ev.type === 'layer-refined' && candLi) setLi(candLi, ev.ok === false ? 'Überarbeitung verworfen' : ev.better ? `Überarbeitung übernommen (${ev.before} → ${ev.after}/10)` : `Überarbeitung verworfen (${ev.before} → ${ev.after}/10)`, ev.better ? 'ok' : 'note');
-          if (ev.type === 'layer-done' && reqLi) setLi(reqLi, reqLi.textContent + ` · ${ev.score}/10`, 'ok');
-          if (ev.type === 'layer-skipped' && reqLi) setLi(reqLi, reqLi.textContent + ' · ausgelassen', 'bad');
-          if (ev.type === 'models' && AI().settings.api() === 'ollama') logItem(`Speicher: nur ${AI().config.codeModel} bleibt geladen`, 'ok');
-          if (ev.type === 'request') { reqLi = logItem(ev.attempt ? `Reparatur ${ev.attempt}/${ev.tries - 1} …` : `Code wird geschrieben (${AI().config.codeModel}) …`, 'act'); stepLi = null; meta(''); }
           if (ev.type === 'tokens') meta(`${ev.n} Tokens`);
-          if (ev.type === 'validate') { setLi(reqLi, reqLi.textContent.replace(' …', ''), 'ok'); stepLi = logItem('Prüfung …', 'act'); }
-          if (ev.type === 'step' && stepLi) setLi(stepLi, `Prüfung: ${ev.step} …`, 'act');
-          if (ev.type === 'ok' && stepLi) setLi(stepLi, 'Prüfung bestanden', 'ok');
-          if (ev.type === 'review') { revLi = logItem(`Bildvergleich mit der Referenz (${AI().config.visionModel}) …`, 'act'); meta(''); }
-          if (ev.type === 'reviewed' && revLi) {
-            setLi(revLi, `Ähnlichkeit ${ev.review.score}/10`, 'ok');
-            if (ev.review.problems.length) { const li = logItem('', 'note'); li.innerHTML = `<ul class="rev">${ev.review.problems.slice(0, 4).map(x => `<li>${esc(x)}</li>`).join('')}</ul>`; }
+          if (ev.type === 'notes') {
+            setLi(askLi, askLi.textContent.replace(' …', ''), 'ok');
+            if (ev.notes) {
+              const li = logItem('', 'note');
+              li.innerHTML = `<details class="notes"><summary>${ev.round ? 'Eigener Vergleich und Plan' : 'Was das Modell sieht und plant'}${ev.title ? ' · ' + esc(ev.title) : ''}</summary><div>${esc(ev.notes)}</div></details>`;
+            }
+            stepLi = logItem('Prüfung …', 'act');
           }
-          if (ev.type === 'refine') revLi = logItem(`Überarbeitung nach Bildvergleich (${AI().config.codeModel}) …`, 'act');
-          if (ev.type === 'refine-fix' && revLi) setLi(revLi, 'Überarbeitung wird repariert …', 'act');
-          if (ev.type === 'refined' && revLi) setLi(revLi, !ev.ok ? 'Überarbeitung verworfen (Prüfung nicht bestanden)'
-            : ev.better ? `Überarbeitung übernommen (${ev.before} → ${ev.after}/10)` : `Überarbeitung verworfen (${ev.before} → ${ev.after}/10)`, ev.ok && ev.better ? 'ok' : 'note');
+          if (ev.type === 'step' && stepLi) setLi(stepLi, `Prüfung: ${ev.step} …`, 'act');
+          if (ev.type === 'ok' && stepLi) setLi(stepLi, 'Prüfung bestanden' + (ev.warnings.length ? ' · ' + ev.warnings.join(' · ') : ''), 'ok');
+          if (ev.type === 'look') logItem('Ergebnis gerendert und dem Modell neben der Referenz gezeigt', 'ok');
           if (ev.type === 'failed') {
-            if (stepLi) setLi(stepLi, 'Prüfung fehlgeschlagen', 'bad'); else if (reqLi) setLi(reqLi, reqLi.textContent.replace(' …', ''), 'bad');
+            if (stepLi) setLi(stepLi, 'Prüfung fehlgeschlagen', 'bad');
             const li = logItem('', 'errs');
             li.innerHTML = `<ul>${ev.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`;
           }
         },
       });
-      if (AI().settings.api() === 'ollama') logItem(`${AI().config.codeModel} entladen`, 'ok');
-      const name = (S.analysis && S.analysis.title) || 'KI-Generator';
-      const fn = await AI().pipeline.save({ name, code: res.code, params: res.params, analysis: S.analysis || {}, prompt: promptText,
-        repairs: res.repairs, thumb: res.thumb, aspect: CG.state.format.w / CG.state.format.h, plan: res.plan || null, mode: layered ? 'layers' : 'single' });
+      if (AI().settings.api() === 'ollama') logItem(`${model} entladen`, 'ok');
+      const fn = await AI().pipeline.save({ name: res.title || 'KI-Shader', code: res.code, params: res.params, prompt: promptText,
+        repairs: res.repairs, thumb: res.thumb, aspect: CG.state.format.w / CG.state.format.h });
       logItem(`Gespeichert als „${fn.name}“ · ${res.params.length} Regler`, 'ok');
       R.runTitle.textContent = 'Fertig';
       endRun('done');
       showResult(fn, res);
       renderLibrary();
       CG.panel.build();
-      // ohne Eingriff direkt in der Sandbox öffnen
-      if (!R.review.checked) setTimeout(() => open(fn.id), 900);
+      if (!R.review.checked) setTimeout(() => open(fn.id), 900);            // ohne Eingriff direkt in der Sandbox öffnen
     } catch (e) {
       const aborted = e && (e.name === 'AbortError' || (signal.aborted && e.code !== 'timeout'));
       R.runTitle.textContent = aborted ? 'Abgebrochen' : 'Fehler';
       if (!aborted) {
-        const li = logItem(e.message || String(e), 'bad');
+        logItem(e.message || String(e), 'bad');
         if (e.errors && e.errors.length) { const l2 = logItem('', 'errs'); l2.innerHTML = `<ul>${e.errors.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`; }
-        if (e.code === 'model_missing') li.classList.add('big');
       } else logItem('Vom Nutzer abgebrochen – Modell wird entladen', 'note');
       endRun('failed');
       R.result.hidden = false;
-      R.result.innerHTML = `<button class="btn primary" type="button" data-a="retry">${CG.icon('refresh')}<span>Nochmal versuchen</span></button>` +
-        (e.lastCode ? `<button class="btn" type="button" data-a="last">${CG.icon('download')}<span>Letzten Code</span></button>` : '');
-      R.result.querySelector('[data-a=retry]').onclick = () => runFlow(S.last);
-      const lb = R.result.querySelector('[data-a=last]');
-      if (lb) lb.onclick = () => CG.util.download(new Blob([e.lastCode], { type: 'text/javascript' }), 'generator-fehlerhaft.js');
+      R.result.innerHTML = `<button class="btn primary" type="button" data-a="retry">${CG.icon('refresh')}<span>Nochmal versuchen</span></button>`;
+      R.result.querySelector('[data-a=retry]').onclick = () => runFlow(true);
     }
   }
 
@@ -451,11 +364,11 @@ CG.aiPage = (() => {
       const card = el(`<div class="gen">
           <button class="gen-open" type="button" title="In Sandbox öffnen">
             ${g.thumb ? `<img src="${esc(g.thumb)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}
-            <span class="meta"><b>${esc(g.name)}</b><small>${new Date(g.created).toLocaleDateString('de-DE')} · ${esc((g.models && g.models.code) || '')}</small></span>
+            <span class="meta"><b>${esc(g.name)}</b><small>${new Date(g.created).toLocaleDateString('de-DE')} · ${esc((g.models && (g.models.model || g.models.code)) || '')}${g.kind === 'shader' ? ' · Shader' : ''}</small></span>
           </button>
           <div class="gen-acts">
-            <button class="act" type="button" data-a="tpl" title="Analyse und Prompt übernehmen">${CG.icon('reset')}</button>
-            <button class="act" type="button" data-a="code" title="Code herunterladen (.js)">${CG.icon('download')}</button>
+            <button class="act" type="button" data-a="tpl" title="Prompt übernehmen">${CG.icon('reset')}</button>
+            <button class="act" type="button" data-a="code" title="Code herunterladen">${CG.icon('download')}</button>
             <button class="act" type="button" data-a="file" title="Generator sichern (.json)">${CG.icon('copy')}</button>
             <button class="act danger" type="button" data-a="del" title="Löschen">${CG.icon('trash')}</button>
           </div></div>`);
@@ -463,9 +376,8 @@ CG.aiPage = (() => {
       card.querySelector('[data-a=code]').onclick = () => fn.downloadCode();
       card.querySelector('[data-a=file]').onclick = () => CG.util.download(new Blob([AI().store.toFile(g)], { type: 'application/json' }), `${g.name.replace(/[^\wäöüÄÖÜß-]+/g, '_')}.cg-generator.json`);
       card.querySelector('[data-a=tpl]').onclick = () => {
-        S.analysis = AI().schema.cleanAnalysis(g.analysis); renderAnalysis();
         S.prompt = g.prompt || ''; R.prompt.value = S.prompt; S.promptDirty = true; promptMeta();
-        H.tick(); toast('Analyse und Prompt übernommen');
+        H.tick(); toast('Prompt übernommen');
       };
       card.querySelector('[data-a=del]').onclick = async () => {
         if (!confirm(`„${g.name}“ endgültig löschen?`)) return;
