@@ -50,7 +50,7 @@ CG.ai.pipeline = (() => {
     await C().ensureOnly(model);
     const base = CG.ai.prompt.messages(text, reference);
     const box = new CG.ai.Sandbox({ timeout: c.timeouts.renderMs });
-    let messages = base, best = null, repairs = 0, title = '', fixing = false;
+    let messages = base, best = null, repairs = 0, title = '', fixing = false, fresh = false, lastKey = '';
     const rounds = 1 + Math.max(0, c.refineRounds | 0);
     let fixesLeft = Math.max(1, c.repairAttempts | 0) + rounds;
     try {
@@ -62,7 +62,7 @@ CG.ai.pipeline = (() => {
           res = await C().chat({
             model, messages, schema: CG.ai.schema.SHADER, schemaName: 'shader_generator',
             // Reparatur: mehr Variation, sonst kommt fast dieselbe Antwort zurück
-            temperature: fixing ? Math.max(0.6, c.temperature) : c.temperature,
+            temperature: fresh ? Math.max(0.8, c.temperature) : fixing ? Math.max(0.6, c.temperature) : c.temperature,
             numCtx: c.numCtx, maxTokens: c.maxTokens, think: thinkOpt(model), noThink: !c.think, keepAlive: '10m',
           }, { signal: d.signal, onChunk: (t, n) => onEvent({ type: 'tokens', n }) });
         } finally { d.done(); }
@@ -84,11 +84,16 @@ CG.ai.pipeline = (() => {
           onEvent({ type: 'failed', round, errors: v.errors });
           if (--fixesLeft < 0) break;
           repairs++; fixing = true;
-          messages = CG.ai.prompt.feedback(base, answer, { errors: v.errors });
+          // derselbe Fehler wie beim letzten Versuch: Das Modell hängt fest -> neuer Anlauf ohne den kaputten Code
+          const key = v.errors.join('|').replace(/Zeile \d+/g, '');
+          if (key === lastKey && best) { onEvent({ type: 'step', step: 'Überarbeitung hängt fest – die letzte funktionierende Fassung bleibt' }); break; }
+          if (key === lastKey) { messages = base; fresh = true; onEvent({ type: 'step', step: 'Gleicher Fehler wie zuvor – neuer Anlauf' }); }
+          else messages = CG.ai.prompt.feedback(base, answer, { errors: v.errors });
+          lastKey = key;
           continue;                                       // gleiche Runde, nur reparieren
         }
         best = { code: answer.shader, params: v.params, warnings: v.warnings };
-        fixing = false;
+        fixing = false; fresh = false; lastKey = '';
         onEvent({ type: 'ok', round, warnings: v.warnings });
         round++;
         if (round >= rounds) break;

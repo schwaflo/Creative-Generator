@@ -390,6 +390,21 @@ describe('Shader', () => {
     assert.ok(!/uniform/.test(r.code)); assert.match(r.code, /u_wellen_intensitaet \* u_ok/);
     assert.equal(r.fixes.length, 2);
   });
+  it('HLSL-Verwechsler und globale Uniform-Zuweisungen werden selbst korrigiert und kompilieren', async () => {
+    const params = [{ id: 'c', label: 'Farbe', type: 'color', default: '#c08040' }];
+    const code = 'vec3 base = u_c;\nfloat hash(vec2 p){ return frac(sin(dot(p, float2(12.9, 78.2))) * 43758.5); }\n' +
+      'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; fragColor = vec4(lerp(base, vec3(1.0), saturate(hash(floor(uv * 9.0)))), 1.0); }';
+    const r = AI.shader.tidy(params, code);
+    assert.match(r.code, /#define base \(u_c\)/); assert.ok(!/\bfrac\(|float2|lerp/.test(r.code));
+    const v = await AI.validate.runShader(r.params, r.code, { sandbox: box });
+    assert.ok(v.ok, v.errors.join(' | '));
+    assert.equal(AI.shader.tidy([], 'float frac(float x){ return x; }\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(frac(1.0)); }').fixes.length, 0, 'eigene frac bleibt');
+  });
+  it('Syntaxfehler zeigen auch die Zeile davor', async () => {
+    const code = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){\n  float a = 1.0 +\n  ;\n  fragColor = vec4(a);\n}';
+    const v = await AI.validate.runShader([], code, { sandbox: box });
+    assert.match(v.errors[0], /Zeile 2: float a = 1\.0 \+  ⏎  Zeile 3: ;/);
+  });
   it('Fast schwarzes Bild mit einem Ausreißer-Pixel gilt als leer', async () => {
     const v = await AI.validate.runShader([{ id: 'seed', label: 'Seed', type: 'seed', default: 1 }],
       'void mainImage(out vec4 f, in vec2 c){ f = vec4(vec3(c.x < 1.0 && c.y < 1.0 ? 1.0 : 0.004 * fract(c.x * 0.37)), 1.0); }', { sandbox: box });

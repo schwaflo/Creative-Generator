@@ -71,7 +71,12 @@ vec3 effect(vec2 fc, vec2 uv0){
       if (!m) return line;
       const n = +m[1] - off;
       if (n <= 0) return m[2];
-      const code = (lines[+m[1] - 1] || '').trim().slice(0, 140);
+      let code = (lines[+m[1] - 1] || '').trim().slice(0, 140);
+      // bei Syntaxfehlern liegt die Ursache oft in der Zeile davor (fehlendes Semikolon, abgebrochener Ausdruck)
+      if (/syntax error/.test(m[2]) && n > 1) {
+        const prev = (lines[+m[1] - 2] || '').trim().slice(0, 140);
+        if (prev) code = `Zeile ${n - 1}: ${prev}  ⏎  Zeile ${n}: ${code}`;
+      }
       let hint = '';
       const und = m[2].match(/'(\w+)'\s*:\s*undeclared identifier/);
       if (und) hint = /^(u_?res|uresolution|resolution)$/i.test(und[1]) ? ' (heißt iResolution)' : /^(u_?time|time)$/i.test(und[1]) ? ' (heißt iTime)'
@@ -120,6 +125,30 @@ vec3 effect(vec2 fc, vec2 uv0){
       fixes.push(`${p.id} → ${id}`);
       return { ...p, id };
     });
+    // typische Verwechsler aus HLSL/anderen Sprachen (nur wenn das Modell sie nicht selbst definiert)
+    const defined = n => new RegExp('\\b(?:float|int|vec[234]|void|bool|mat[234])\\s+' + n + '\\s*\\(').test(src);
+    const swaps = [['frac', 'fract'], ['lerp', 'mix'], ['fmod', 'mod'], ['atan2', 'atan'], ['float2', 'vec2'], ['float3', 'vec3'], ['float4', 'vec4']];
+    for (const [a, b] of swaps) {
+      const re = new RegExp('\\b' + a + '\\b(?=\\s*\\()', 'g');
+      if (re.test(src) && !defined(a)) { src = src.replace(re, b); fixes.push(`${a} → ${b}`); }
+    }
+    if (/\bsaturate\s*\(/.test(src) && !defined('saturate')) {
+      src = ['float', 'vec2', 'vec3', 'vec4'].map(t => `${t} saturate(${t} x){ return clamp(x, 0.0, 1.0); }`).join('\n') + '\n' + src;
+      fixes.push('saturate ergänzt');
+    }
+    // globale Variablen mit Uniforms/iTime im Initialisierer sind in GLSL verboten -> als #define
+    let depth = 0;
+    src = src.split('\n').map(line => {
+      const atTop = depth === 0;
+      depth += (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
+      if (!atTop) return line;
+      const m = line.match(/^\s*(?:const\s+)?(?:float|int|vec[234]|mat[234])\s+(\w+)\s*=\s*([^;]+);\s*(\/\/.*)?$/);
+      if (!m || !/\b(?:u_\w+|iTime|iResolution|iLoop|iFrame|iDate)\b/.test(m[2])) return line;
+      const assigned = new RegExp('\\b' + m[1] + '\\s*(?:[-+*/]?=(?!=)|\\+\\+|--)', 'g');
+      if ((src.match(assigned) || []).length > 1) return line;          // wird später verändert -> so lassen
+      fixes.push(`globale Variable ${m[1]} als #define`);
+      return `#define ${m[1]} (${m[2].trim()})`;
+    }).join('\n');
     const before = src;
     src = src.replace(/^[ \t]*uniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+u_\w+(?:\s*,\s*u_\w+)*\s*;[ \t]*\n?/gm, '');
     if (src !== before) fixes.push('eigene Uniform-Deklarationen entfernt');
