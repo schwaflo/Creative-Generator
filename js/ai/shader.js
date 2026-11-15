@@ -24,12 +24,39 @@ vec3 effect(vec2 fc, vec2 uv0){
 }`;
   const MARK = '// ---- KI-SHADER ----';
 
+  /* Shadertoy-Stil: void mainImage(out vec4 fragColor, in vec2 fragCoord) mit iResolution, iTime …
+     Das Modell schreibt frei, ohne vorgegebene Helfer. Damit seine eigenen Funktionen (hash12, fbm, snoise …)
+     nicht mit der Bibliothek der App kollidieren, bekommt die Bibliothek per #define andere Namen. */
+  const LIB = ['mod289', 'permute', 'taylorInvSqrt', 'grad4', 'snoise', 'fbm', 'hash12', 'hash11', 'aaSharp', 'seedOffset'];
+  const isToy = code => /\bvoid\s+mainImage\s*\(/.test(String(code || ''));
+  const PRE = LIB.map(n => `#define ${n} cg_${n}`).join('\n') + '\n';
+  const pre = code => isToy(code) ? PRE : '';
+  const TOY_HEAD = `${LIB.map(n => `#undef ${n}`).join('\n')}
+uniform float uLoopSec;
+#define iResolution vec3(uRes, 1.0)
+#define iTime (uPhase * uLoopSec)
+#define iLoop uPhase
+#define iTimeDelta (1.0 / 60.0)
+#define iFrame int(uPhase * uLoopSec * 60.0)
+#define iFrameRate 60.0
+#define iMouse vec4(0.0)
+#define iDate vec4(2026.0, 1.0, 1.0, uPhase * uLoopSec)`;
+  const TOY_EFFECT = `
+${LIB.map(n => `#define ${n} cg_${n}`).join('\n')}
+vec3 effect(vec2 fc, vec2 uv0){
+  vec4 c = vec4(0.0, 0.0, 0.0, 1.0);
+  mainImage(c, fc);
+  return clamp(c.rgb, 0.0, 1.0);
+}`;
+
   const uniformName = id => 'u_' + id;
   const decl = params => params.map(p => `uniform ${p.type === 'color' ? 'vec3' : 'float'} ${uniformName(p.id)};`).join('\n');
 
   // Rumpf für die Funktion (wird von CG.glsl.build um Kopf, Rauschen und Finish ergänzt)
-  const body = (params, code) => `${decl(params)}\n${PRELUDE}\n${MARK}\n${code}\n${EFFECT}`;
-  const source = (params, code) => CG.glsl.build({ glsl: body(params, code) });
+  const body = (params, code) => isToy(code)
+    ? `${TOY_HEAD}\n${decl(params)}\n${MARK}\n${code}\n${TOY_EFFECT}`
+    : `${decl(params)}\n${PRELUDE}\n${MARK}\n${code}\n${EFFECT}`;            // ältere Shader mit image(uv, p, t)
+  const source = (params, code) => CG.glsl.build({ glsl: body(params, code), pre: pre(code) });
 
   // Zeile im Gesamtquelltext -> Zeile im Shader des Modells
   function codeLineOffset(src) {
@@ -47,20 +74,21 @@ vec3 effect(vec2 fc, vec2 uv0){
       const code = (lines[+m[1] - 1] || '').trim().slice(0, 140);
       let hint = '';
       const und = m[2].match(/'(\w+)'\s*:\s*undeclared identifier/);
-      if (und) hint = und[1].toLowerCase() === 'u_res' || und[1] === 'iResolution' ? ' (heißt uRes)' : und[1] === 'iTime' ? ' (heißt t)' : ' (nicht definiert – nur uv, p, t, uRes, deine u_<id> und die genannten Helfer gibt es)';
+      if (und) hint = /^(u_?res|uresolution|resolution)$/i.test(und[1]) ? ' (heißt iResolution)' : /^(u_?time|time)$/i.test(und[1]) ? ' (heißt iTime)'
+        : ' (nicht definiert – vorhanden sind nur iResolution, iTime, iLoop, deine u_<id> und Funktionen, die du selbst schreibst)';
       return `Zeile ${n}: ${m[2]}${hint}${code ? `  →  ${code}` : ''}`;
     });
   }
 
   // Werte der Regler -> Uniform-Liste für den Worker
-  function uniforms(params, values) {
+  function uniforms(params, values, loopSec = 10) {
     return params.map(p => {
       let v = values && p.id in values ? values[p.id] : p.default;
       if (p.type === 'color') return [uniformName(p.id), 'vec3', CG.util.hexToRgb(v)];
       if (p.type === 'toggle') v = v ? 1 : 0;
       else if (p.type === 'select') v = Math.max(0, p.options.indexOf(String(v)));
       return [uniformName(p.id), 'float', +v || 0];
-    });
+    }).concat([['uLoopSec', 'float', loopSec]]);
   }
 
   /* Statische Prüfung: Funktion vorhanden, keine Texturen, Schleifen mit fester Obergrenze (sonst kann die GPU hängen) */
@@ -68,19 +96,35 @@ vec3 effect(vec2 fc, vec2 uv0){
     const e = [];
     const c = String(code || '').replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '');
     if (!c.trim()) return ['Das Feld "shader" ist leer.'];
-    if (!/vec3\s+image\s*\(\s*vec2\s+\w+\s*,\s*vec2\s+\w+\s*,\s*float\s+\w+\s*\)/.test(c)) e.push('Es fehlt die Funktion  vec3 image(vec2 uv, vec2 p, float t).');
-    if (/\b(?:texture|texelFetch|textureLod)\s*\(/.test(c)) e.push('Texturen sind nicht erlaubt.');
-    if (/\bwhile\s*\(/.test(c)) e.push('while-Schleifen sind nicht erlaubt – nur for-Schleifen mit fester Obergrenze.');
+    if (!isToy(c) && !/vec3\s+image\s*\(/.test(c)) e.push('Es fehlt  void mainImage(out vec4 fragColor, in vec2 fragCoord).');
+    if (/\biChannel\d|\b(?:texture|texelFetch|textureLod)\s*\(/.test(c)) e.push('Es gibt keine Texturen/iChannel – alles muss prozedural entstehen.');
     if (/^\s*#\s*version/m.test(c)) e.push('Keine #version-Zeile – die App setzt sie selbst.');
     if (/\buniform\s+\w+\s+u_/.test(c)) e.push('Die Regler-Uniforms (u_…) nicht selbst deklarieren – die App erzeugt sie.');
-    if (/\bvoid\s+main\s*\(/.test(c)) e.push('Keine main()-Funktion – nur image() und eigene Hilfsfunktionen.');
-    for (const m of c.matchAll(/for\s*\(([^;]*);([^;]*);/g)) {
-      const cond = m[2].trim(), lit = cond.match(/^\w+\s*<=?\s*(\d+)(?:\.0*)?$/);
-      if (!lit) { e.push(`Schleife „for (${m[1].trim()}; ${cond}; …)“: Obergrenze muss eine feste Zahl sein, z. B. for (int i = 0; i < 32; i++) { if (float(i) >= u_count) break; }`); break; }
-      if (+lit[1] > 256) { e.push(`Schleife mit ${lit[1]} Durchläufen ist zu teuer (höchstens 256, besser ≤ 64).`); break; }
-    }
+    if (/\bvoid\s+main\s*\(/.test(c)) e.push('Keine main()-Funktion – nur mainImage() und eigene Funktionen.');
+    if (/\bwhile\s*\(\s*true\s*\)|\bfor\s*\(\s*[^;]*;\s*;/.test(c)) e.push('Endlosschleife – jede Schleife braucht eine Abbruchbedingung.');
     return e;
   }
 
-  return { PRELUDE, body, source, uniforms, uniformName, staticCheck, localizeLog, codeLineOffset };
+  /* Kleinigkeiten selbst korrigieren statt eine Reparaturrunde zu verlangen:
+     - ungültige Regler-ids (Umlaute, Leerzeichen, Bindestriche) -> gültige ids, auch im Shader ersetzt
+     - selbst deklarierte Regler-Uniforms (uniform float u_x;) -> entfernt, die App deklariert sie */
+  function tidy(params, code) {
+    const fixes = [];
+    let src = String(code || '');
+    const out = (Array.isArray(params) ? params : []).map(p => {
+      if (!p || typeof p !== 'object' || typeof p.id !== 'string' || /^[A-Za-z_]\w*$/.test(p.id)) return p;
+      const id = p.id.replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue').replace(/ß/g, 'ss')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\W+/g, '_').replace(/^(\d)/, '_$1') || 'p';
+      const esc = p.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      src = src.replace(new RegExp('\\bu_' + esc + '(?![\\wäöüÄÖÜß])', 'g'), 'u_' + id);
+      fixes.push(`${p.id} → ${id}`);
+      return { ...p, id };
+    });
+    const before = src;
+    src = src.replace(/^[ \t]*uniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+u_\w+(?:\s*,\s*u_\w+)*\s*;[ \t]*\n?/gm, '');
+    if (src !== before) fixes.push('eigene Uniform-Deklarationen entfernt');
+    return { params: out, code: src, fixes };
+  }
+
+  return { PRELUDE, body, source, pre, isToy, tidy, uniforms, uniformName, staticCheck, localizeLog, codeLineOffset };
 })();

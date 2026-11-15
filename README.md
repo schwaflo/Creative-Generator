@@ -58,24 +58,21 @@ Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 
 ### Ablauf
 
-Ein Gespräch mit einem Modell, das Bilder lesen kann (z. B. `gemma4:12b-mlx`) – so, wie man einen Coding-Assistenten fragt:
+Ein Gespräch mit einem Modell, das Bilder lesen kann – so frei wie möglich:
 
 1. **Referenzbild** ablegen oder wählen (wird auf max. `maxImageSide` px verkleinert), optional Wünsche.
-2. **Prompt** aus fester, versionierter Vorlage (`js/ai/prompt.js`, aktuell `shader-v1`) – angezeigt und editierbar („Prompt erst prüfen“).
-3. Das Modell sieht das Bild, beschreibt zuerst selbst, was es sieht, plant, legt seine Regler fest und schreibt einen
-   **GLSL-Fragment-Shader** – alles in einer JSON-Antwort `{title, notes, params, shader}`.
-4. **Prüfung** in der Sandbox (Worker mit WebGL2): Regler-Schema, statische Regeln, Kompilieren (Fehlerzeilen bezogen
-   auf den Shader des Modells, mit der betroffenen Codezeile), Probe-Render bei mehreren `t`, einfarbiges Bild, Tempo,
-   Extremwerte aller Regler und ob jeder Regler sichtbar wirkt (Farbregler, die das Bild nicht färben, gehen als Fehler
-   zurück; nach einem erfolglosen Versuch wird der Shader mit Hinweis übernommen).
-   Fehler gehen ins selbe Gespräch zurück (bis zu `repairAttempts` Reparaturen).
-5. **Eigener Vergleich** (`refineRounds`): Das Modell sieht sein Ergebnis neben der Referenz (links „REFERENZ“, rechts
-   „ERGEBNIS“), schreibt die Unterschiede auf und verbessert.
+2. **Prompt** (`js/ai/prompt.js`, aktuell `shader-v2`) – kurz, ohne Technik-Vorgaben und ohne Beispielcode; editierbar („Prompt erst prüfen“).
+3. Das Modell beschreibt, was es sieht, wählt seine Regler selbst und schreibt einen Shader im **Shadertoy-Stil**
+   (`mainImage`, `iResolution`, `iTime`) mit eigenen Funktionen – alles in einer JSON-Antwort `{title, notes, params, shader}`.
+4. **Prüfung** in der Sandbox (Worker mit WebGL2). Kleinigkeiten korrigiert die App selbst (Umlaute in Regler-ids,
+   selbst deklarierte Uniforms, fehlende Reglergrenzen). Zurück ans Modell gehen nur echte Fehler: kompiliert nicht
+   (mit Codezeile), Bild leer/schwarz, viel zu langsam. Alles andere (Regler ohne Wirkung, keine Animation) ist ein Hinweis.
+5. **Eigener Vergleich** (`refineRounds`): Das Modell sieht sein Ergebnis neben der Referenz und verbessert.
+   Scheitert eine Überarbeitung, bleibt die letzte funktionierende Fassung.
 6. Speichern im Browser, Regler automatisch aus dem Schema; ohne „Prompt erst prüfen“ öffnet sich am Ende die Sandbox.
 
-Der Shader läuft danach in derselben WebGL-Pipeline wie Feuer und Grounddata: Finish, Bild-Ebene, Supersampling-Export,
-Video und nahtloser Loop funktionieren genauso. `maxTokens` hebt die Antwortlänge an (Ollamas MLX-Motor kappt sonst bei
-etwa 2048 Token). Die Qualität hängt stark vom Modell ab; lokale Modelle um 12 B treffen Aufbau und Farben oft nur grob.
+Der Shader läuft danach in derselben WebGL-Pipeline wie Feuer und Grounddata (Finish, Bild-Ebene, Export, Video).
+`iTime` läuft in Sekunden; die Loop-Dauer der App bestimmt, wie lange ein Durchlauf dauert. Die Qualität hängt stark vom Modell ab.
 
 ### Konfiguration – `config.json` + Seite „KI“
 
@@ -100,22 +97,21 @@ etwa 2048 Token). Die Qualität hängt stark vom Modell ab; lokale Modelle um 12
 
 ```json
 {
-  "title": "Tintentropfen",
+  "title": "Weiche Wellen",
   "notes": "Sehe: … Plan: …",
   "params": [
-    { "id": "count", "label": "Anzahl", "type": "range", "min": 1, "max": 12, "step": 1, "default": 6, "group": "Form" },
-    { "id": "ink", "label": "Tinte", "type": "color", "default": "#2ec4b6" },
+    { "id": "scale", "label": "Maßstab", "type": "range", "min": 0.5, "max": 6, "step": 0.01, "default": 2.5 },
+    { "id": "a", "label": "Farbe 1", "type": "color", "default": "#1b2a4a" },
     { "id": "seed", "label": "Seed", "type": "seed", "default": 7 }
   ],
-  "shader": "vec3 image(vec2 uv, vec2 p, float t) { … }"
+  "shader": "void mainImage(out vec4 fragColor, in vec2 fragCoord) { … }"
 }
 ```
 
-- `uv` 0..1, `p` zentriert und seitenrichtig, `t` Loop-Zeit 0..1, `uRes` Auflösung.
+- Shadertoy-Konventionen: `iResolution`, `iTime` (Sekunden), `iLoop` (0..1), eigene Hilfsfunktionen frei wählbar.
 - Jeder Regler ist eine Uniform `u_<id>`: `float` (range, seed, toggle 0/1, select = Index), `vec3` (color).
-- Vorhandene Helfer: `snoise`, `fbm`, `loopNoise`, `loopFbm`, `hash11`, `hash12`, `smin`, `rot`, `sdCircle`, `sdSegment`, `TAU`.
-- Keine Texturen, kein `while`, Schleifen nur mit fester Obergrenze (≤ 256).
-- Ältere Canvas-2D-Generatoren (`function draw(ctx, p, t, rng)`) aus früheren Versionen laufen weiter.
+- Keine Texturen/`iChannel`, kein `#version`, keine Endlosschleifen.
+- Ältere Generatoren (`vec3 image(uv, p, t)` und Canvas 2D `draw(ctx, p, t, rng)`) laufen weiter.
 
 ### Sicherheit
 

@@ -69,7 +69,7 @@ async function fullRun(label) {
   assert.ok(r.result.thumb, 'kein Vorschaubild');
   const img = document.createElement('img'); img.src = r.result.thumb; img.title = label; document.getElementById('imgs').appendChild(img);
   const box = new AI.Sandbox({ timeout: 6000 });
-  try { const v = await AI.validate.runShader(r.result.params, r.result.code, { sandbox: box, aspect: 16 / 9 }); assert.ok(v.ok || v.soft, v.errors.join(' | ')); }   // soft: Regler ohne Wirkung – die Pipeline übernimmt das mit Hinweis
+  try { const v = await AI.validate.runShader(r.result.params, r.result.code, { sandbox: box, aspect: 16 / 9 }); assert.ok(v.ok, v.errors.join(' | ')); }
   finally { box.destroy(); }
 }
 

@@ -148,4 +148,4 @@ void main(){
   outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`;
 
-CG.glsl.build = fn => '#version 300 es\n' + CG.glsl.head + CG.glsl.noise + fn.glsl + CG.glsl.main;
+CG.glsl.build = fn => '#version 300 es\n' + CG.glsl.head + (fn.pre || '') + CG.glsl.noise + fn.glsl + CG.glsl.main;

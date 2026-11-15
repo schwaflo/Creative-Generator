@@ -55,7 +55,12 @@ describe('schema.validateParams', () => {
   it('kein Array -> Fehler', () => assert.ok(!AI.schema.validateParams({}).ok));
   it('doppelte id -> Fehler', () => assert.includes(AI.schema.validateParams([good[0], good[0]]).errors, 'doppelt'));
   it('ungültige id -> Fehler', () => assert.ok(!AI.schema.validateParams([{ ...good[0], id: '2bad' }]).ok));
-  it('min >= max -> Fehler', () => assert.ok(!AI.schema.validateParams([{ ...good[0], min: 5, max: 5 }]).ok));
+  it('fehlende/ungültige Grenzen werden aus dem Standardwert ergänzt, ganz ohne Werte 0 … 1', () => {
+    const v = AI.schema.validateParams([{ id: 'a', label: 'A', type: 'range', default: 0.4 }]);
+    assert.ok(v.ok); assert.equal(v.params[0].min, 0); assert.equal(v.params[0].max, 0.8);
+    const n = AI.schema.validateParams([{ id: 'a', type: 'range' }]);
+    assert.ok(n.ok); assert.deepEqual([n.params[0].min, n.params[0].max, n.params[0].default], [0, 1, 0.5]);
+  });
   it('default außerhalb wird begrenzt (Warnung)', () => {
     const v = AI.schema.validateParams([{ ...good[0], default: 999 }]);
     assert.ok(v.ok); assert.equal(v.params[0].default, 50); assert.ok(v.warnings.length);
@@ -66,7 +71,8 @@ describe('schema.validateParams', () => {
   });
   it('Farbe #abc wird zu #aabbcc, ungültige Farbe ist Fehler', () => {
     assert.equal(AI.schema.validateParams([{ id: 'c', type: 'color', default: '#abc' }]).params[0].default, '#aabbcc');
-    assert.ok(!AI.schema.validateParams([{ id: 'c', type: 'color', default: 'red' }]).ok);
+    const r = AI.schema.validateParams([{ id: 'c', type: 'color', default: 'red' }]);
+    assert.ok(r.ok); assert.equal(r.params[0].default, '#808080');
   });
   it('Typ-Synonyme (number, boolean) werden gelesen', () => {
     const v = AI.schema.validateParams([{ id: 'a', type: 'number', min: 0, max: 1, default: 0 }, { id: 'b', type: 'boolean', default: false }]);
@@ -328,11 +334,12 @@ function draw(ctx) { throw new Error(JSON.stringify([v, W, H, S])); }`);
 
 /* ---------- Prompt (ein Gespräch, Shader) ---------- */
 describe('Prompt', () => {
-  it('Auftrag: Wunsch, Format, eigene Regler, Shader-Regeln, Beispiel', () => {
+  it('Auftrag: kurz und frei – Wunsch, Format, Shadertoy-Stil, Regler als Uniforms, kein Beispielcode', () => {
     const t = AI.prompt.text({ wishes: 'die Blops bewegen sich', format: { w: 2480, h: 3508 } });
-    assert.match(t, /die Blops bewegen sich/); assert.match(t, /Hochformat/);
-    assert.match(t, /the controls you think make sense/); assert.match(t, /vec3 image\(vec2 uv, vec2 p, float t\)/);
-    assert.match(t, /u_<id>/); assert.match(t, /"shader": "vec3 image/);
+    assert.match(t, /die Blops bewegen sich/); assert.match(t, /portrait/);
+    assert.match(t, /void mainImage\(out vec4 fragColor, in vec2 fragCoord\)/); assert.match(t, /iTime/); assert.match(t, /u_<id>/);
+    assert.ok(!/smin|loopFbm|Weiche Wellen/.test(t), 'keine Technik-Vorgaben oder Beispiel im Prompt');
+    assert.ok(t.length < 1500, 'Prompt soll kurz sein');
     assert.match(AI.prompt.VERSION, /^shader-v\d+$/);
   });
   it('Nachrichten: Bild am Auftrag, nächste Runde mit Vergleichsbild oder Fehlerliste', () => {
@@ -355,7 +362,7 @@ describe('Shader', () => {
   const ex = JSON.parse(AI.prompt.EXAMPLE);
   it('Beispiel aus dem Prompt besteht die Prüfung', async () => {
     const v = await AI.validate.runShader(ex.params, ex.shader, { sandbox: box, aspect: 16 / 9 });
-    assert.ok(v.ok, v.errors.join(' | ')); assert.equal(v.params.length, 6);
+    assert.ok(v.ok, v.errors.join(' | ')); assert.equal(v.params.length, 5);
   });
   it('GLSL-Fehler mit Zeile des Modell-Shaders', async () => {
     const code = 'vec3 image(vec2 uv, vec2 p, float t) {\n  float a = 1.0;\n  return vec3(a, b, 0.0);\n}';
@@ -363,35 +370,52 @@ describe('Shader', () => {
     assert.match(v.errors[0], /GLSL-Fehler – Zeile 3:.*'b'/);
     assert.match(v.errors[0], /→  return vec3\(a, b, 0\.0\);/);
   });
-  it('Schleifen ohne feste Obergrenze, Texturen, eigene Uniforms werden abgelehnt', () => {
-    const S = AI.shader.staticCheck;
-    assert.match(S('vec3 image(vec2 uv, vec2 p, float t){ for (int i = 0; i < int(u_n); i++) {} return vec3(0.0); }')[0], /feste Zahl/);
-    assert.match(S('vec3 image(vec2 uv, vec2 p, float t){ while (true) {} return vec3(0.0); }')[0], /while/);
-    assert.match(S('uniform float u_x; vec3 image(vec2 uv, vec2 p, float t){ return texture(x, uv).rgb; }').join(' '), /Texturen/);
-    assert.equal(S('vec3 image(vec2 uv, vec2 p, float t){ for (int i = 0; i < 32; i++) {} return vec3(0.0); }').length, 0);
-    assert.match(S('vec4 image(vec2 uv){ return vec4(0.0); }')[0], /vec3 image/);
+  it('Statische Prüfung: nur Texturen, Endlosschleifen, eigene u_-Uniforms und fehlendes mainImage', () => {
+    const S = AI.shader.staticCheck, M = b => 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ ' + b + ' }';
+    assert.equal(S(M('for (int i = 0; i < int(u_n); i++) {} fragColor = vec4(1.0);')).length, 0, 'freie Schleifen erlaubt');
+    assert.match(S(M('while (true) {}'))[0], /Endlosschleife/);
+    assert.match(S('uniform float u_x; ' + M('fragColor = texture(iChannel0, fragCoord);')).join(' '), /Texturen/);
+    assert.match(S('vec4 foo(vec2 uv){ return vec4(0.0); }')[0], /mainImage/);
+  });
+  it('Eigene Funktionen namens hash12/fbm/snoise kollidieren nicht mit der App-Bibliothek; iTime läuft in Sekunden', async () => {
+    const code = 'float hash12(vec2 p){ return fract(sin(dot(p, vec2(12.9, 78.2))) * 43758.5); }\nfloat fbm(vec2 p){ return hash12(floor(p)); }\n' +
+      'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; fragColor = vec4(vec3(fbm(uv * 8.0 + floor(iTime))), 1.0); }';
+    const v = await AI.validate.runShader([{ id: 'seed', label: 'Seed', type: 'seed', default: 1 }], code, { sandbox: box });
+    assert.ok(v.ok, v.errors.join(' | '));
+  });
+  it('Kleinigkeiten werden selbst korrigiert: Umlaut-ids (auch im Shader), eigene Uniform-Deklarationen', () => {
+    const r = AI.shader.tidy([{ id: 'wellen_intensität', type: 'range' }, { id: 'ok', type: 'range' }],
+      'uniform float u_ok;\nuniform vec3 u_x, u_y;\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(u_wellen_intensität * u_ok); }');
+    assert.equal(r.params[0].id, 'wellen_intensitaet'); assert.equal(r.params[1].id, 'ok');
+    assert.ok(!/uniform/.test(r.code)); assert.match(r.code, /u_wellen_intensitaet \* u_ok/);
+    assert.equal(r.fixes.length, 2);
+  });
+  it('Fast schwarzes Bild mit einem Ausreißer-Pixel gilt als leer', async () => {
+    const v = await AI.validate.runShader([{ id: 'seed', label: 'Seed', type: 'seed', default: 1 }],
+      'void mainImage(out vec4 f, in vec2 c){ f = vec4(vec3(c.x < 1.0 && c.y < 1.0 ? 1.0 : 0.004 * fract(c.x * 0.37)), 1.0); }', { sandbox: box });
+    assert.match(v.errors[0], /einfarbig bzw\. schwarz/);
   });
   it('Einfarbiges Bild wird erkannt', async () => {
     const v = await AI.validate.runShader([{ id: 'c', label: 'C', type: 'color', default: '#336699' }], 'vec3 image(vec2 uv, vec2 p, float t) { return u_c; }', { sandbox: box });
     assert.match(v.errors[0], /einfarbig/);
   });
-  it('Farbregler ohne Wirkung (nur Schwarz/Weiß) werden als Fehler gemeldet', async () => {
+  it('Regler ohne Wirkung (z. B. Farbe bei Schwarz/Weiß) sind nur ein Hinweis', async () => {
     const params = [
       { id: 'amber', label: 'Bernstein', type: 'color', default: '#c06010' },
       { id: 'size', label: 'Größe', type: 'range', min: 0.1, max: 0.5, step: 0.01, default: 0.3 },
       { id: 'seed', label: 'Seed', type: 'seed', default: 1 }];
     const bw = 'vec3 image(vec2 uv, vec2 p, float t) { float m = step(length(p + 0.05 * sin(TAU * t)), u_size); return vec3(m); }';
     const v = await AI.validate.runShader(params, bw, { sandbox: box, aspect: 16 / 9 });
-    assert.equal(v.ok, false); assert.match(v.errors.join(' '), /Farbe „Bernstein“ \(u_amber\) hat keine sichtbare Wirkung/);
+    assert.ok(v.ok, v.errors.join(' | ')); assert.match(v.warnings.join(' '), /Ohne sichtbare Wirkung: „Bernstein“ \(u_amber\)/);
     const ok = await AI.validate.runShader(params, bw.replace('return vec3(m);', 'return mix(vec3(0.95), u_amber, m);'), { sandbox: box, aspect: 16 / 9 });
-    assert.ok(ok.ok, ok.errors.join(' | '));
+    assert.ok(ok.ok, ok.errors.join(' | ')); assert.ok(!/Bernstein/.test(ok.warnings.join(' ')));
   });
   it('Regler werden zu Uniforms (Farbe vec3, Auswahl als Index, Schalter 0/1)', async () => {
     const params = AI.schema.validateParams([
       { id: 'c', label: 'Farbe', type: 'color', default: '#ff0000' },
       { id: 'mode', label: 'Modus', type: 'select', options: ['A', 'B', 'C'], default: 'C' },
       { id: 'on', label: 'An', type: 'toggle', default: true }]).params;
-    assert.deepEqual(AI.shader.uniforms(params, {}), [['u_c', 'vec3', [1, 0, 0]], ['u_mode', 'float', 2], ['u_on', 'float', 1]]);
+    assert.deepEqual(AI.shader.uniforms(params, {}), [['u_c', 'vec3', [1, 0, 0]], ['u_mode', 'float', 2], ['u_on', 'float', 1], ['uLoopSec', 'float', 10]]);
     const code = 'vec3 image(vec2 uv, vec2 p, float t) { return uv.x < 0.5 ? u_c * u_on : vec3(u_mode / 2.0); }';
     const r = await box.shader({ frag: AI.shader.source(params, code), uniforms: AI.shader.uniforms(params, {}), t: 0, w: 8, h: 4, stats: true });
     r.bitmap.close();

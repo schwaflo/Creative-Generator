@@ -31,7 +31,7 @@ CG.ai.schema = (() => {
   function validateParams(params) {
     const errors = [], warnings = [], out = [];
     if (!Array.isArray(params)) return { ok: false, errors: ['`params` muss ein Array sein (const params = [ … ]).'], warnings, params: [] };
-    if (!params.length) errors.push('`params` ist leer – mindestens 4 Regler definieren.');
+    if (!params.length) warnings.push('Keine Regler.');
     if (params.length > 40) errors.push(`Zu viele Parameter (${params.length}); höchstens 40.`);
     const seen = new Set();
     params.forEach((p, i) => {
@@ -47,8 +47,13 @@ CG.ai.schema = (() => {
       if (!TYPES.includes(type)) { errors.push(`${id}: unbekannter type „${p.type}“ (erlaubt: ${TYPES.join(', ')}).`); return; }
       const q = { id, label: String(p.label || id).slice(0, 40), type, group: p.group ? String(p.group).slice(0, 24) : null };
       if (type === 'range') {
-        const min = +p.min, max = +p.max;
-        if (!isFinite(min) || !isFinite(max) || min >= max) { errors.push(`${id}: min/max ungültig (min=${p.min}, max=${p.max}).`); return; }
+        let min = +p.min, max = +p.max;
+        if (!isFinite(min) || !isFinite(max) || min >= max) {          // fehlende Grenzen aus dem Standardwert ableiten statt Reparaturrunde
+          const d0 = +(p.default ?? p.value), d = isFinite(d0) ? d0 : 0.5;    // gar keine Werte: 0 … 1
+          min = isFinite(min) && min < d ? min : d > 0 ? 0 : d === 0 ? 0 : d * 2;
+          max = isFinite(max) && max > d ? max : d > 0 ? d * 2 : d === 0 ? 1 : 0;
+          warnings.push(`${id}: Bereich ergänzt (${min} … ${max}).`);
+        }
         let step = +p.step;
         if (!isFinite(step) || step <= 0) { step = +((max - min) / 100).toPrecision(2); warnings.push(`${id}: step ergänzt (${step}).`); }
         let def = +(p.default ?? p.value);
@@ -61,8 +66,8 @@ CG.ai.schema = (() => {
         Object.assign(q, { min: 0, max: 9999, step: 1, default: Math.min(9999, Math.max(0, def)) });
       } else if (type === 'color') {
         const def = normHex(p.default ?? p.value);
-        if (!def) { errors.push(`${id}: color braucht default im Format "#rrggbb" (ist „${p.default}“).`); return; }
-        q.default = def;
+        q.default = def || '#808080';
+        if (!def) warnings.push(`${id}: Farbe „${p.default}“ unlesbar, Grau gesetzt.`);
       } else if (type === 'select') {
         const opts = Array.isArray(p.options) ? p.options.map(o => (o && typeof o === 'object') ? String(o.value ?? o.label) : String(o)).filter(Boolean) : [];
         if (opts.length < 2) { errors.push(`${id}: select braucht options mit mindestens 2 Einträgen.`); return; }
@@ -74,7 +79,6 @@ CG.ai.schema = (() => {
       }
       out.push(q);
     });
-    if (!out.some(p => p.type === 'color')) warnings.push('Keine Farb-Parameter – Farben sind nicht einstellbar.');
     return { ok: !errors.length, errors, warnings, params: out };
   }
 

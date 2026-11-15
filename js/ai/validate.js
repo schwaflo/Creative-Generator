@@ -160,7 +160,6 @@ CG.ai.validate = (() => {
     warnings.push(...v.warnings);
     if (!v.ok) return { ok: false, errors: v.errors, warnings, params: [] };
     const P = v.params;
-    if (P.length < 3) warnings.push('Wenige Regler (' + P.length + ').');
     step('Shader');
     const se = SH.staticCheck(code);
     if (se.length) return { ok: false, errors: se, warnings, params: P };
@@ -181,43 +180,36 @@ CG.ai.validate = (() => {
         const r = await render(base, t, true);
         slow = Math.max(slow, r.ms);
         grids[t] = r.stats.grid;
-        if (r.stats.nonUniform > 0.003) visible = true;
+        if (r.stats.spread > 0.04 || (r.stats.nonUniform > 0.003 && r.stats.mean > 0.03 && r.stats.mean < 0.97 && r.stats.spread > 0.015)) visible = true;
       } catch (e) {
         if (e.errName === 'GLSLError') errors.push('GLSL-Fehler – ' + SH.localizeLog(e.message, frag).join(' | '));
         else errors.push(e.kind === 'timeout' ? `Der Shader ist viel zu langsam (> ${renderMs} ms für ${w} px). Weniger Schleifendurchläufe/Oktaven.` : 'Fehler beim Rendern: ' + e.message);
         break;
       }
     }
-    if (!errors.length && !visible) errors.push('Das Bild ist einfarbig – image() liefert überall dieselbe Farbe (Koordinaten p/uv, Größen, Farben prüfen).');
-    if (!errors.length && slow > 120) errors.push(`Der Shader braucht ${Math.round(slow)} ms für ein kleines Probebild – in 4K wäre das viel zu langsam. Weniger Schleifen/Oktaven.`);
-    else if (!errors.length && slow > 40) warnings.push(`Etwas langsam (${Math.round(slow)} ms bei ${w} px).`);
+    if (!errors.length && !visible) errors.push('Das Bild ist (fast) einfarbig bzw. schwarz – es ist nichts vom Motiv zu sehen. Prüfe Kamera, Abstände, Licht und Farben.');
+    if (!errors.length && slow > 250) errors.push(`Der Shader braucht ${Math.round(slow)} ms für ein kleines Probebild (${w} px) – so ist er in der App kaum benutzbar. Bitte deutlich günstiger rechnen.`);
+    else if (!errors.length && slow > 60) warnings.push(`Etwas langsam (${Math.round(slow)} ms bei ${w} px).`);
     if (!errors.length) {
-      const d = grids[0].reduce((s, x, i) => s + Math.abs(x - grids[0.999][i]), 0) / grids[0].length;
-      if (d > 0.06) warnings.push('Loop nicht nahtlos: t=0 und t=1 unterscheiden sich sichtbar.');
       const m = grids[0].reduce((s, x, i) => s + Math.abs(x - grids[0.37][i]), 0) / grids[0].length;
-      if (m < 0.0005) warnings.push('Keine sichtbare Animation über t.');
+      if (m < 0.0005) warnings.push('Keine sichtbare Animation.');
     }
     if (errors.length) return { ok: false, errors, warnings, params: P };
     step('Regler-Test');
     for (const [name, vals] of variants(P)) {
       try {
         const r = await render(vals, 0.5, false);
-        if (r.ms > 250) { errors.push(`Mit ${name} der Regler braucht der Shader ${Math.round(r.ms)} ms – Obergrenzen der Regler oder Schleifen verkleinern.`); break; }
+        if (r.ms > 600) { errors.push(`Mit ${name} der Regler braucht der Shader ${Math.round(r.ms)} ms – Obergrenzen der Regler oder Schleifen verkleinern.`); break; }
       } catch (e) { errors.push(`Mit ${name} der Regler: ${e.message}`); break; }
     }
     if (errors.length) return { ok: false, errors, warnings, params: P };
+    // nur Hinweis (geht in der Vergleichsrunde ans Modell): Regler, die nichts sichtbar verändern
     step('Regler-Wirkung');
     try {
       const dead = await deadParams(P, base, render);
-      const deadColors = dead.filter(p => p.type === 'color'), deadOther = dead.filter(p => p.type !== 'color');
-      const nOther = P.filter(p => p.type !== 'color' && p.type !== 'seed').length;
-      deadColors.forEach(p => errors.push(`Die Farbe „${p.label}“ (u_${p.id}) hat keine sichtbare Wirkung – das Bild muss diese Farbe benutzen (z. B. col = mix(col, u_${p.id}, maske)), statt feste Farben oder nur Schwarz/Weiß.`));
-      const msg = deadOther.map(p => `„${p.label}“ (u_${p.id})`).join(', ');
-      if (deadOther.length && deadOther.length * 3 > nOther) errors.push(`Diese Regler verändern das Bild nicht sichtbar: ${msg}. Jeder Regler muss eine deutliche Wirkung haben.`);
-      else if (deadOther.length) warnings.push(`Ohne sichtbare Wirkung: ${msg}.`);
-    } catch (e) { errors.push('Fehler beim Regler-Test: ' + e.message); }
-    // soft: nur die Regler-Wirkung fehlt – der Shader läuft; die Pipeline darf ihn nach einem Reparaturversuch trotzdem nehmen
-    return { ok: !errors.length, errors, warnings, params: P, soft: errors.length > 0 };
+      if (dead.length) warnings.push(`Ohne sichtbare Wirkung: ${dead.map(p => `„${p.label}“ (u_${p.id})`).join(', ')}.`);
+    } catch (e) { /* nur Hinweis */ }
+    return { ok: !errors.length, errors, warnings, params: P };
   }
 
   return { run, runShader, staticCheck, deadParams };

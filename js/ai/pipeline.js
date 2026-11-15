@@ -50,7 +50,7 @@ CG.ai.pipeline = (() => {
     await C().ensureOnly(model);
     const base = CG.ai.prompt.messages(text, reference);
     const box = new CG.ai.Sandbox({ timeout: c.timeouts.renderMs });
-    let messages = base, best = null, repairs = 0, title = '', fixing = false, softTries = 0;
+    let messages = base, best = null, repairs = 0, title = '', fixing = false;
     const rounds = 1 + Math.max(0, c.refineRounds | 0);
     let fixesLeft = Math.max(1, c.repairAttempts | 0) + rounds;
     try {
@@ -73,13 +73,13 @@ CG.ai.pipeline = (() => {
           params: Array.isArray(j.params) ? j.params : [],
           shader: CG.ai.parse.extractShader(j.shader != null ? String(j.shader) : res.text) || '',
         };
+        const td = CG.ai.shader.tidy(answer.params, answer.shader);
+        answer.params = td.params; answer.shader = td.code;
+        if (td.fixes.length) onEvent({ type: 'step', step: 'Korrigiert: ' + td.fixes.join(', ') });
         if (answer.title) title = answer.title;
         onEvent({ type: 'notes', round, notes: answer.notes, title: answer.title });
         const v = await CG.ai.validate.runShader(answer.params, answer.shader, { sandbox: box, aspect, renderMs: c.timeouts.renderMs,
           onStep: step => onEvent({ type: 'step', step }) });
-        if (!v.ok && v.soft && softTries++ >= 1) {         // Regler ohne Wirkung: einmal reparieren lassen, dann mit Hinweis übernehmen
-          v.ok = true; v.warnings = [...v.warnings, ...v.errors]; v.errors = [];
-        }
         if (!v.ok) {
           onEvent({ type: 'failed', round, errors: v.errors });
           if (--fixesLeft < 0) break;

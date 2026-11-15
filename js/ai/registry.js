@@ -156,8 +156,9 @@ vec3 effect(vec2 fc, vec2 uv){
     if (gen.kind === 'shader') {
       const fn = {
         id, name: gen.name, ai: true, shader: true, gen,
-        glsl: CG.ai.shader.body(gen.params, gen.code),
+        glsl: CG.ai.shader.body(gen.params, gen.code), pre: CG.ai.shader.pre(gen.code),
         groups: S().toGroups(id, gen.params, true),
+        bind: (gl, loc, P) => gl.uniform1f(loc('uLoopSec'), +P.loopLen || 10),   // iTime in Sekunden
         presets: presetsOf(gen),
         overrides: { loopLen: 10, grain: 0 },
         downloadCode, savePreset,
