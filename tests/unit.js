@@ -332,38 +332,99 @@ function draw(ctx) { throw new Error(JSON.stringify([v, W, H, S])); }`);
   });
 });
 
-/* ---------- Prompt (ein Gespräch, Shader) ---------- */
+/* ---------- Prompt (Art Director) ---------- */
 describe('Prompt', () => {
-  it('Auftrag: kurz und frei – Wunsch, Format, Shadertoy-Stil, Regler als Uniforms, kein Beispielcode', () => {
+  it('Auftrag: Rezept statt Code – Wunsch, Format, alle Ebenen-Typen', () => {
     const t = AI.prompt.text({ wishes: 'die Blops bewegen sich', format: { w: 2480, h: 3508 } });
-    assert.match(t, /die Blops bewegen sich/); assert.match(t, /portrait/);
-    assert.match(t, /void mainImage\(out vec4 fragColor, in vec2 fragCoord\)/); assert.match(t, /iTime/); assert.match(t, /u_<id>/);
-    assert.ok(!/smin|loopFbm|Weiche Wellen/.test(t), 'keine Technik-Vorgaben oder Beispiel im Prompt');
-    assert.ok(t.length < 1500, 'Prompt soll kurz sein');
-    assert.match(AI.prompt.VERSION, /^shader-v\d+$/);
+    assert.match(t, /die Blops bewegen sich/); assert.match(t, /portrait/); assert.match(t, /You do not write code/);
+    AI.recipe.TYPE_IDS.forEach(id => assert.match(t, new RegExp('- ' + id + ':'), 'Typ fehlt im Auftrag: ' + id));
+    assert.ok(!/mainImage|GLSL|shader/i.test(t), 'kein Code im Auftrag');
+    assert.match(AI.prompt.VERSION, /^rezept-v\d+$/);
   });
-  it('Nachrichten: Bild am Auftrag, nächste Runde mit Vergleichsbild oder Fehlerliste', () => {
+  it('Nachrichten: Bild am Auftrag, nächste Runde mit Vergleichsbild und dem angeglichenen Rezept', () => {
     const base = AI.prompt.messages('T', 'IMG');
     assert.equal(base.length, 2); assert.deepEqual(base[1].images, ['IMG']);
-    const a = { title: 'X', notes: 'n', params: [], shader: 's' };
-    const look = AI.prompt.feedback(base, a, { compareBase64: 'CMP' });
+    const look = AI.prompt.feedback(base, { title: 'X', layers: [] }, { compareBase64: 'CMP' });
     assert.equal(look.length, 4); assert.deepEqual(look[3].images, ['CMP']); assert.match(look[3].content, /LEFT = the reference/);
-    const err = AI.prompt.feedback(base, a, { errors: ['Fehler A'], compareBase64: 'CMP' });
-    assert.equal(err[3].images, undefined); assert.match(err[3].content, /- Fehler A/);
+    assert.match(look[2].content, /"title": "X"/);
   });
-  it('Antwort-Schema verlangt Titel, Beobachtung, Regler, Shader', () => {
-    assert.deepEqual(AI.schema.SHADER.required, ['title', 'notes', 'params', 'shader']);
+});
+
+/* ---------- Rezept ---------- */
+describe('Rezept', () => {
+  const RC = AI.recipe;
+  const sample = { title: 'Netz', notes: 'n', background: { top: '#e8e0e8', bottom: '#405068', glow: '#fff0e8', glowX: 0.1, glowY: 0.2, glowSize: 0.6, glowStrength: 0.8 },
+    camera: { tilt: 0.6, roll: -20, zoom: 0.5, focus: 0.4, blur: 0.6, haze: 0.5 }, light: { angle: 140 },
+    layers: [{ type: 'mesh', colorA: '#e8d8e0', colorB: '#8088a8', size: 0.45, fill: 0.3, chaos: 0.7, detail: 0.6, relief: 0.8, gloss: 0.3 }] };
+  it('Antwort-Schema: Typen als Auswahl, Felder in fester Reihenfolge', () => {
+    assert.deepEqual(RC.SCHEMA.required, ['title', 'notes', 'background', 'camera', 'layers']);
+    assert.deepEqual(RC.SCHEMA.properties.layers.items.properties.type.enum, RC.TYPE_IDS);
+    assert.equal(RC.TYPE_IDS.length, 12);
+  });
+  it('Unvollständige oder kaputte Rezepte werden nie zum Fehler', () => {
+    const a = RC.normalize(null);
+    assert.equal(a.layers.length, 1); assert.equal(a.layers[0].type, 'fog');
+    const b = RC.normalize({ background: { top: 'rot' }, camera: { tilt: 7, roll: 'x' }, layers: [
+      { type: 'organic mesh', colorA: 'abc', size: '0.4', fill: 5, blend: 'glow', motion: 'tanzen', speed: 9 }, { type: 'gibtsnicht' }, 'quatsch',
+      ...Array.from({ length: 9 }, () => ({ type: 'dots', colorA: '#ffffff', colorB: '#000000' }))] });
+    assert.equal(b.background.top, '#20232b'); assert.equal(b.camera.tilt, 1); assert.equal(b.camera.roll, 0);
+    assert.equal(b.layers.length, RC.MAX_LAYERS);
+    const m = b.layers[0];
+    assert.deepEqual([m.type, m.colorA, m.colorB, m.size, m.fill, m.blend, m.motion, m.speed], ['mesh', '#aabbcc', '#aabbcc', 0.4, 1, 'normal', 'flow', 3]);
+    assert.equal(RC.normalize({ layers: [{ type: 'mesh', blend: 'screen' }] }).layers[0].blend, 'normal', 'feste Körper decken normal');
+    assert.equal(RC.normalize({ layers: [{ type: 'fog', blend: 'screen' }] }).layers[0].blend, 'screen');
+  });
+  it('Regler aus dem Rezept: gültiges Schema, Gruppen pro Ebene, Werte zurück ins Rezept', () => {
+    const rc = RC.normalize(sample), v = AI.schema.validateParams(RC.toParams(rc));
+    assert.ok(v.ok, v.errors.join(' | '));
+    const ids = v.params.map(p => p.id);
+    ['bg1', 'tilt', 'light', 'seed', 'e1_a', 'e1_size', 'e1_motion'].forEach(id => assert.ok(ids.includes(id), id + ' fehlt'));
+    assert.equal(v.params.find(p => p.id === 'e1_fill').group, '1 · Netz');
+    v.params.find(p => p.id === 'e1_fill').default = 0.55; v.params.find(p => p.id === 'bg1').default = '#112233';
+    const back = RC.withParams(rc, v.params);
+    assert.equal(back.layers[0].fill, 0.55); assert.equal(back.background.top, '#112233'); assert.equal(rc.layers[0].fill, 0.3, 'Original bleibt unverändert');
+    assert.equal(RC.describe(RC.normalize({ layers: [{ type: 'fog' }, { type: 'mesh' }] })), 'Nebel + Netz');
+  });
+  it('Jeder Ebenen-Typ kompiliert und zeichnet etwas Sichtbares', () => {
+    const rd = new RC.Renderer(), bad = [];
+    for (const t of RC.TYPE_IDS) {
+      const rc = RC.normalize({ background: { top: '#202838', bottom: '#101018' }, layers: [{ type: t, colorA: '#f0d0a0', colorB: '#603020' }] });
+      rd.compile(AI.schema.validateParams(RC.toParams(rc)).params, RC.toCode(rc));
+      rd.render(96, 96, 0.25);
+      const f = RC.features(rd.pixels(96, 96), 96, 96, true);
+      let c = 0; for (let i = 0; i < 64; i++) c += f[i * 8 + 3];
+      if (c / 64 < 0.01) bad.push(t);
+    }
+    rd.destroy();
+    assert.deepEqual(bad, []);
+  });
+  it('Der erzeugte Shader besteht auch die allgemeine Shader-Prüfung (läuft im Renderer der App)', async () => {
+    const rc = RC.normalize({ ...sample, layers: [...sample.layers, { type: 'bokeh', colorA: '#ffffff', colorB: '#ffe0c0' }] });
+    const box = new AI.Sandbox({ timeout: 6000 });
+    const v = await AI.validate.runShader(RC.toParams(rc), RC.toCode(rc), { sandbox: box, aspect: 0.707 });
+    box.destroy();
+    assert.ok(v.ok, v.errors.join(' | '));
+  });
+  it('Angleichen: findet verstellte Farben und Werte wieder (Abstand zur Referenz sinkt deutlich)', async () => {
+    const target = RC.normalize(sample), [w, h] = RC.fitSize(0.707);
+    const rd = new RC.Renderer(), P = AI.schema.validateParams(RC.toParams(target)).params, code = RC.toCode(target);
+    rd.compile(P, code); rd.render(w, h, 0.25);
+    const ref = { f: RC.features(rd.pixels(w, h), w, h, true), w, h };
+    const off = RC.normalize({ ...sample, background: { ...sample.background, top: '#a09098', bottom: '#203048', glowX: 0.35 },
+      camera: { ...sample.camera, tilt: 0.45 }, layers: [{ ...sample.layers[0], colorA: '#c0b0b8', colorB: '#606888', size: 0.55, fill: 0.45 }] });
+    const P2 = AI.schema.validateParams(RC.toParams(off)).params;
+    rd.compile(P2, RC.toCode(off));
+    const r = await RC.fit(rd, P2, ref, { steps: 500 });
+    rd.destroy();
+    assert.ok(r.best < r.start * 0.6, `Abstand ${r.start.toFixed(4)} → ${r.best.toFixed(4)}`);
+    assert.ok(r.params.every(p => !('c0' in p)), 'keine Hilfswerte in den Reglern');
+    assert.match(r.params.find(p => p.id === 'bg1').default, /^#[0-9a-f]{6}$/);
   });
 });
 
 /* ---------- Shader ---------- */
 describe('Shader', () => {
   const box = new AI.Sandbox({ timeout: 4000 });
-  const ex = JSON.parse(AI.prompt.EXAMPLE);
-  it('Beispiel aus dem Prompt besteht die Prüfung', async () => {
-    const v = await AI.validate.runShader(ex.params, ex.shader, { sandbox: box, aspect: 16 / 9 });
-    assert.ok(v.ok, v.errors.join(' | ')); assert.equal(v.params.length, 5);
-  });
   it('GLSL-Fehler mit Zeile des Modell-Shaders', async () => {
     const code = 'vec3 image(vec2 uv, vec2 p, float t) {\n  float a = 1.0;\n  return vec3(a, b, 0.0);\n}';
     const v = await AI.validate.runShader([{ id: 'seed', label: 'Seed', type: 'seed', default: 1 }], code, { sandbox: box });

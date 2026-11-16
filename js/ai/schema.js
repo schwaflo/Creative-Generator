@@ -32,7 +32,7 @@ CG.ai.schema = (() => {
     const errors = [], warnings = [], out = [];
     if (!Array.isArray(params)) return { ok: false, errors: ['`params` muss ein Array sein (const params = [ … ]).'], warnings, params: [] };
     if (!params.length) warnings.push('Keine Regler.');
-    if (params.length > 40) errors.push(`Zu viele Parameter (${params.length}); höchstens 40.`);
+    if (params.length > 120) errors.push(`Zu viele Parameter (${params.length}); höchstens 120.`);
     const seen = new Set();
     params.forEach((p, i) => {
       const where = `params[${i}]`;

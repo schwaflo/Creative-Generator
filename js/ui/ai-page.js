@@ -1,6 +1,6 @@
 'use strict';
-/* Seite „KI“: Referenzbild + Wunsch -> Shader-Generator.
-   Ein Gespräch mit einem Modell, das Bilder lesen kann (sehen, planen, Shader schreiben, selbst vergleichen).
+/* Seite „KI“: Referenzbild + Wunsch -> Generator.
+   Das Modell ist Art Director: Es beschreibt das Bild als Rezept aus Ebenen; die App rendert und gleicht an (js/ai/recipe.js).
    Der Browser spricht direkt mit dem KI-Server (Ollama oder OpenAI-kompatibel) – kein Server dazwischen. */
 CG.aiPage = (() => {
   const { el, esc, toast, store } = CG.util;
@@ -36,7 +36,7 @@ CG.aiPage = (() => {
             <div class="drop-empty">${CG.icon('upload')}<span>Bild ablegen oder wählen</span></div>
             <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
           </div>
-          <textarea class="ai-text ai-wishes" rows="3" spellcheck="false" placeholder="Zusatzwünsche, z. B. Animation mit Geschwindigkeitsregler, Farbpalette tauschbar"></textarea>
+          <textarea class="ai-text ai-wishes" rows="3" spellcheck="false" placeholder="Wünsche, z. B. sanfte Bewegung, mehr Tiefe, kräftigere Farben"></textarea>
           <div class="ai-row">
             <label class="ai-check"><input type="checkbox" data-a="review"><span>Prompt erst prüfen</span></label>
             <button class="btn primary" type="button" data-a="go">Generator erzeugen</button>
@@ -288,40 +288,36 @@ CG.aiPage = (() => {
     const model = AI().config.model;
     try {
       const promptText = R.prompt.value;
-      let askLi = null, stepLi = null;
+      let askLi = null, fitLi = null;
       const res = await AI().pipeline.generate(promptText, {
         signal, aspect: CG.state.format.w / CG.state.format.h, reference: S.image.base64,
         onEvent: ev => {
           if (ev.type === 'ask') {
-            askLi = logItem(ev.fixing ? 'Fehler werden behoben …' : ev.round ? `Runde ${ev.round + 1}/${ev.rounds}: verbessert nach eigenem Vergleich …` : `${model} sieht das Bild, plant und schreibt den Shader …`, 'act');
-            stepLi = null; meta('');
+            askLi = logItem(ev.round ? `Runde ${ev.round + 1}/${ev.rounds}: ${model} vergleicht und ändert das Rezept …` : `${model} sieht das Bild und schreibt das Rezept …`, 'act');
+            fitLi = null; meta('');
           }
           if (ev.type === 'tokens') meta(`${ev.n} Tokens`);
-          if (ev.type === 'notes') {
-            setLi(askLi, askLi.textContent.replace(' …', ''), 'ok');
+          if (ev.type === 'recipe') {
+            setLi(askLi, `${askLi.textContent.replace(' …', '')} · ${ev.layers}`, 'ok');
             if (ev.notes) {
               const li = logItem('', 'note');
-              li.innerHTML = `<details class="notes"><summary>${ev.round ? 'Eigener Vergleich und Plan' : 'Was das Modell sieht und plant'}${ev.title ? ' · ' + esc(ev.title) : ''}</summary><div>${esc(ev.notes)}</div></details>`;
+              li.innerHTML = `<details class="notes"><summary>${ev.round ? 'Eigener Vergleich' : 'Was das Modell sieht'}${ev.title ? ' · ' + esc(ev.title) : ''}</summary><div>${esc(ev.notes)}</div></details>`;
             }
-            stepLi = logItem('Prüfung …', 'act');
+            fitLi = logItem('Die App gleicht Farben und Aufbau an die Referenz an …', 'act'); meta('');
           }
-          if (ev.type === 'step' && stepLi) setLi(stepLi, `Prüfung: ${ev.step} …`, 'act');
-          if (ev.type === 'ok' && stepLi) setLi(stepLi, 'Prüfung bestanden' + (ev.warnings.length ? ' · ' + ev.warnings.join(' · ') : ''), 'ok');
-          if (ev.type === 'look') logItem('Ergebnis gerendert und dem Modell neben der Referenz gezeigt', 'ok');
-          if (ev.type === 'failed') {
-            if (stepLi) setLi(stepLi, 'Prüfung fehlgeschlagen', 'bad');
-            const li = logItem('', 'errs');
-            li.innerHTML = `<ul>${ev.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`;
-          }
+          if (ev.type === 'fit' && fitLi) setLi(fitLi, `Die App gleicht Farben und Aufbau an die Referenz an … ${Math.round(100 * ev.done / ev.steps)} %`, 'act');
+          if (ev.type === 'fitted' && fitLi) setLi(fitLi, `Angeglichen · Übereinstimmung ${ev.from} % → ${ev.to} %${ev.kept ? '' : ' · nicht messbar besser, die vorige Fassung bleibt (beide stehen unten zur Auswahl)'}`, 'ok');
+          if (ev.type === 'pruned') logItem(`Ohne Wirkung auf die Ähnlichkeit, entfernt: ${ev.layers.join(', ')}`, 'note');
+          if (ev.type === 'look') logItem('Ergebnis dem Modell neben der Referenz gezeigt', 'ok');
         },
       });
       if (AI().settings.api() === 'ollama') logItem(`${model} entladen`, 'ok');
-      const fn = await AI().pipeline.save({ name: res.title || 'KI-Shader', code: res.code, params: res.params, prompt: promptText,
-        repairs: res.repairs, thumb: res.thumb, aspect: CG.state.format.w / CG.state.format.h });
-      logItem(`Gespeichert als „${fn.name}“ · ${res.params.length} Regler`, 'ok');
+      const fn = await AI().pipeline.save({ name: res.title || 'KI-Generator', code: res.code, params: res.params, recipe: res.recipe, score: res.score,
+        prompt: promptText, thumb: res.thumb, aspect: CG.state.format.w / CG.state.format.h });
+      logItem(`Gespeichert als „${fn.name}“ · ${AI().recipe.describe(res.recipe)}`, 'ok');
       R.runTitle.textContent = 'Fertig';
       endRun('done');
-      showResult(fn, res);
+      showResult(fn, res, promptText);
       renderLibrary();
       CG.panel.build();
       if (!R.review.checked) setTimeout(() => open(fn.id), 900);            // ohne Eingriff direkt in der Sandbox öffnen
@@ -339,13 +335,24 @@ CG.aiPage = (() => {
     }
   }
 
-  function showResult(fn, res) {
+  // Ergebnis: gespeichert wird die Fassung mit der besten gemessenen Übereinstimmung; die anderen Runden stehen zur Auswahl
+  function showResult(fn, res, promptText) {
     R.result.hidden = false;
+    const others = (res.candidates || []).filter(c => c.round !== res.round);
     R.result.innerHTML = `${res.thumb ? `<img src="${res.thumb}" alt="">` : ''}
-      <div class="res-meta"><b>${esc(fn.name)}</b><small>${res.params.length} Regler · ${res.repairs ? res.repairs + ' Reparatur(en)' : 'ohne Reparatur'}</small>
-      ${res.warnings.length ? `<small class="warn">${res.warnings.map(esc).join(' · ')}</small>` : ''}</div>
-      <button class="btn primary" type="button" data-a="open">In Sandbox öffnen</button>`;
+      <div class="res-meta"><b>${esc(fn.name)}</b><small>${esc(AI().recipe.describe(res.recipe))} · Übereinstimmung ${res.similarity} %</small></div>
+      <button class="btn primary" type="button" data-a="open">In Sandbox öffnen</button>
+      ${others.map((c, i) => `<button class="btn res-alt" type="button" data-alt="${i}" title="Diese Fassung zusätzlich speichern">
+        <img src="${c.thumb}" alt=""><span>Runde ${c.round + 1} · ${esc(AI().recipe.describe(c.recipe))} · ${c.similarity} %</span></button>`).join('')}`;
     R.result.querySelector('[data-a=open]').onclick = () => open(fn.id);
+    R.result.querySelectorAll('[data-alt]').forEach(btn => { btn.onclick = async () => {
+      const c = others[+btn.dataset.alt]; btn.disabled = true;
+      try {
+        const f2 = await AI().pipeline.save({ name: `${c.title || fn.name} · Runde ${c.round + 1}`, code: c.code, params: c.params, recipe: c.recipe, score: c.score,
+          prompt: promptText, thumb: c.thumb, aspect: CG.state.format.w / CG.state.format.h });
+        renderLibrary(); CG.panel.build(); open(f2.id);
+      } catch (e) { toast(e.message); btn.disabled = false; }
+    }; });
   }
 
   function open(fnId) {
@@ -364,7 +371,7 @@ CG.aiPage = (() => {
       const card = el(`<div class="gen">
           <button class="gen-open" type="button" title="In Sandbox öffnen">
             ${g.thumb ? `<img src="${esc(g.thumb)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}
-            <span class="meta"><b>${esc(g.name)}</b><small>${new Date(g.created).toLocaleDateString('de-DE')} · ${esc((g.models && (g.models.model || g.models.code)) || '')}${g.kind === 'shader' ? ' · Shader' : ''}</small></span>
+            <span class="meta"><b>${esc(g.name)}</b><small>${new Date(g.created).toLocaleDateString('de-DE')} · ${esc((g.models && (g.models.model || g.models.code)) || '')}${g.recipe ? ' · ' + esc(AI().recipe.describe(g.recipe)) : g.kind === 'shader' ? ' · Shader' : ''}</small></span>
           </button>
           <div class="gen-acts">
             <button class="act" type="button" data-a="tpl" title="Prompt übernehmen">${CG.icon('reset')}</button>

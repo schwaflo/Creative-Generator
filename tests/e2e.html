@@ -12,7 +12,7 @@
 </style>
 </head>
 <body>
-<h1>End-to-End: Bild → Shader-Generator (Browser direkt → Ollama)</h1>
+<h1>End-to-End: Bild → Rezept → Generator (Browser direkt → Ollama)</h1>
 <p>Testet die Ollama-Schnittstelle und die OpenAI-kompatible Schnittstelle (über Ollamas <code>/v1</code>).
 Dauert einige Minuten. Es wird nichts gespeichert; die KI-Einstellungen dieses Browsers werden danach wiederhergestellt.
 <button id="go">Starten</button></p>
@@ -27,6 +27,7 @@ Dauert einige Minuten. Es wird nichts gespeichert; die KI-Einstellungen dieses B
 <script src="../js/gl/common.js"></script>
 <script src="../js/ai/sandbox.js"></script>
 <script src="../js/ai/shader.js"></script>
+<script src="../js/ai/recipe.js"></script>
 <script src="../js/ai/validate.js"></script>
 <script src="../js/ai/store.js"></script>
 <script src="../js/ai/pipeline.js"></script>
@@ -63,17 +64,20 @@ async function fullRun(label) {
   const t0 = performance.now();
   r.events = [];
   r.result = await AI.pipeline.generate(prompt, { aspect: 16 / 9, reference: image.base64,
-    onEvent: e => { if (e.type !== 'tokens' && e.type !== 'step' && e.type !== 'notes') r.events.push(e.type + (e.errors ? ': ' + e.errors.join(' | ') : '')); } });
+    onEvent: e => { if (e.type === 'recipe') r.events.push('Rezept: ' + e.layers); if (e.type === 'fitted') r.events.push(`angeglichen ${e.from} → ${e.to} %`); } });
   r.genMs = performance.now() - t0;
-  assert.ok(r.result.params.length >= 3, 'zu wenige Regler');
+  assert.ok(r.result.recipe.layers.length >= 1, 'keine Ebene');
+  assert.ok(r.result.params.length >= 20, 'zu wenige Regler');
   assert.ok(r.result.thumb, 'kein Vorschaubild');
+  assert.ok(r.result.candidates.length >= 1);
   const img = document.createElement('img'); img.src = r.result.thumb; img.title = label; document.getElementById('imgs').appendChild(img);
+  // der erzeugte Shader läuft auch in der Sandbox-Prüfung (so wie später im Renderer der App)
   const box = new AI.Sandbox({ timeout: 6000 });
   try { const v = await AI.validate.runShader(r.result.params, r.result.code, { sandbox: box, aspect: 16 / 9 }); assert.ok(v.ok, v.errors.join(' | ')); }
   finally { box.destroy(); }
 }
 
-it('Ollama-Schnittstelle: Bild → Shader + Prüfung', () => fullRun('ollama'));
+it('Ollama-Schnittstelle: Bild → Rezept → angeglichener Generator', () => fullRun('ollama'));
 
 it('Speicher: danach ist kein Modell mehr geladen', async () => assert.deepEqual(await loadedNow(), []));
 
@@ -86,7 +90,7 @@ it('Abbrechen stoppt die Generierung und entlädt das Modell', async () => {
   assert.deepEqual(await loadedNow(), []);
 });
 
-it('OpenAI-kompatible Schnittstelle (/v1): Modelle, Shader + Prüfung', async () => {
+it('OpenAI-kompatible Schnittstelle (/v1): Modelle, Rezept → Generator', async () => {
   AI.settings.set({ server: 'openai', url: OLLAMA, refineRounds: 0 });
   const s = await AI.client.status();
   assert.ok(s.ok && s.models.length, 'keine Modelle über /v1/models');
@@ -105,9 +109,9 @@ async function go() {
   document.getElementById('go').disabled = true;
   const r = await T.run(document.getElementById('out'));
   const info = document.createElement('p');
-  info.innerHTML = Object.entries(ctx.runs).map(([k, v]) => `<small>${k}: ${Math.round((v.genMs || 0) / 1000)} s · Reparaturen ${v.result ? v.result.repairs : '–'} · ${(v.events || []).join(' → ')}</small>`).join('<br>');
+  info.innerHTML = Object.entries(ctx.runs).map(([k, v]) => `<small>${k}: ${Math.round((v.genMs || 0) / 1000)} s · Übereinstimmung ${v.result ? v.result.similarity + ' %' : '–'} · ${(v.events || []).join(' → ')}</small>`).join('<br>');
   document.getElementById('out').appendChild(info);
-  window.__e2e = { ...r, runs: Object.fromEntries(Object.entries(ctx.runs).map(([k, v]) => [k, { genS: Math.round(v.genMs / 1000), repairs: v.result && v.result.repairs, events: v.events, title: v.result && v.result.title, params: v.result && v.result.params.length }])) };
+  window.__e2e = { ...r, runs: Object.fromEntries(Object.entries(ctx.runs).map(([k, v]) => [k, { genS: Math.round(v.genMs / 1000), sim: v.result && v.result.similarity, events: v.events, title: v.result && v.result.title, params: v.result && v.result.params.length }])) };
 }
 document.getElementById('go').onclick = go;
 if (/[?&]run=1/.test(location.search)) go();

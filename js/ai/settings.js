@@ -22,12 +22,12 @@ CG.ai.settings = (() => {
     url: 'http://localhost:11434',
     model: 'gemma4:12b-mlx',                 // muss Bilder lesen können
     temperature: 0.4,
-    numCtx: 16384,
+    numCtx: 8192,
     maxTokens: 8192,                         // Ollamas MLX-Motor kappt sonst bei ~2048 Token
     think: false,
     timeouts: { generationSec: 900, renderMs: 4000 },
-    repairAttempts: 3,
-    refineRounds: 2,
+    refineRounds: 1,                         // Runden, in denen das Modell das Rezept nach eigenem Vergleich ändert
+    fitSteps: 900,                           // Schritte beim automatischen Angleichen an die Referenz
     maxImageSide: 1024,
   };
 

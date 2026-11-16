@@ -91,6 +91,10 @@
 .res-meta { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 3px; }
 .res-meta small { color: var(--muted); }
 .res-meta small.warn { color: #f0c58f; }
+/* weitere Fassungen aus anderen Runden */
+.res-alt { flex-basis: 100%; justify-content: flex-start; gap: 12px; padding: 6px 12px 6px 6px; text-align: left; }
+.res-alt img { height: 54px; border-radius: 6px; }
+.res-alt span { color: var(--muted); font-size: 12px; }
 
 /* Generator-Bibliothek */
 .ai-lib h2 { font-size: 13px; font-weight: 600; color: var(--muted); }
