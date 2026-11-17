@@ -365,6 +365,7 @@ CG.aiPage = (() => {
       }
       if (ev.type === 'step' && stepLi) setLi(stepLi, `Prüfung: ${ev.step} …`, 'act');
       if (ev.type === 'ok') {
+        if (ev.fixes && ev.fixes.length) corrected = [...corrected, ...ev.fixes];
         const line = 'Prüfung bestanden' + (fixLi ? ` nach ${fails.length} Nachbesserung${fails.length === 1 ? '' : 'en'}` : '');
         if (fixLi) { setFix(line, 'ok'); fixLi = null; fails = []; } else if (stepLi) setLi(stepLi, line, 'ok');
         const notes = [...(corrected.length ? ['von der App korrigiert: ' + corrected.join(', ')] : []), ...ev.warnings];

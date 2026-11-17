@@ -244,5 +244,97 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     return { params: out, code: src, fixes };
   }
 
-  return { PRELUDE, body, source, pre, isToy, tidy, helpers, uniforms, uniformName, staticCheck, localizeLog, codeLineOffset };
+  /* ---------- Rettung bei Kompilierfehlern ----------
+     Mechanische Fehler, an denen kleine Modelle oft scheitern, ohne Rückfrage beheben. Jede Variante wird nur übernommen,
+     wenn der Shader danach wirklich kompiliert (validate.runShader prüft das) – ein funktionierender Shader wird nie verändert. */
+  const TY = '(?:void|float|int|uint|bool|vec[234]|ivec[234]|uvec[234]|bvec[234]|mat[234](?:x[234])?)';
+  // Kommentare durch Leerzeichen ersetzen (Positionen und Zeilen bleiben gleich)
+  const mask = c => c.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, m => m.replace(/[^\n]/g, ' '));
+  function closeOf(m, open) { let d = 0; for (let i = open; i < m.length; i++) { if (m[i] === '{') d++; else if (m[i] === '}' && --d === 0) return i; } return -1; }
+  const depthAt = (m, pos) => { let d = 0; for (let i = 0; i < pos; i++) { if (m[i] === '{') d++; else if (m[i] === '}') d--; } return d; };
+  // Funktionsdefinitionen: { start, open, end, name, sig, depth }
+  function functions(code) {
+    const m = mask(code), out = [];
+    const re = new RegExp('(?:^|(?<=[;{}\\s]))(?:(?:highp|mediump|lowp)\\s+)?(' + TY + ')\\s+([A-Za-z_]\\w*)\\s*\\(([^(){};]*)\\)\\s*\\{', 'g');
+    let r;
+    while ((r = re.exec(m))) {
+      const open = re.lastIndex - 1, end = closeOf(m, open);
+      if (end < 0) continue;
+      out.push({ start: r.index, open, end: end + 1, name: r[2], sig: `${r[1]} ${r[2]}(${r[3].trim().replace(/\s+/g, ' ')})`, depth: depthAt(m, r.index) });
+      re.lastIndex = open + 1;                               // auch verschachtelte Definitionen finden
+    }
+    return out;
+  }
+  // 1. Funktionen vor ihrer Definition benutzt -> Prototypen an den Anfang
+  function prototypes(code) {
+    const sigs = [...new Set(functions(code).filter(f => f.depth === 0 && !/^(mainImage|main|image)$/.test(f.name)).map(f => f.sig + ';'))];
+    return sigs.length ? sigs.join('\n') + '\n' + code : code;
+  }
+  // 2. Funktionen innerhalb von Funktionen (in GLSL verboten) -> davor setzen
+  function hoist(code) {
+    const fs = functions(code), nested = fs.filter(f => f.depth > 0 && !fs.some(g => g !== f && g.depth > 0 && g.start < f.start && f.end <= g.end));
+    if (!nested.length) return code;
+    let out = code;
+    for (const f of nested.slice().reverse()) {
+      const host = fs.filter(g => g.depth === 0 && g.start < f.start && f.end <= g.end)[0];
+      if (!host) continue;
+      const text = out.slice(f.start, f.end);
+      out = out.slice(0, f.start) + out.slice(f.end);
+      out = out.slice(0, host.start) + text + '\n' + out.slice(host.start);
+    }
+    return out;
+  }
+  // 3. fehlende schließende Klammern am Ende ergänzen
+  function braces(code) {
+    const m = mask(code), n = (m.match(/\{/g) || []).length - (m.match(/\}/g) || []).length;
+    return n > 0 ? code + '\n' + '}\n'.repeat(n) : code;
+  }
+  // 4. for (int i …) -> for (float i …): i darf dann in Rechnungen mit Kommazahlen stehen (pow(0.5, i), i * 0.3)
+  function floatLoops(code) {
+    return code.replace(/\bfor\s*\(\s*int\s+(\w+)\s*=\s*([^;]*?)\s*;\s*\1\s*(<=|>=|<|>|!=)\s*([^;]*?)\s*;\s*(\+\+\s*\1|\1\s*\+\+|\1\s*\+=\s*1|--\s*\1|\1\s*--|\1\s*-=\s*1)\s*\)/g,
+      (all, v, a, op, b, inc) => `for (float ${v} = float(${a}); ${v} ${op} float(${b}); ${v} ${/-/.test(inc) ? '-' : '+'}= 1.0)`);
+  }
+  // 5. Ganzzahlen in Rechnungen mit Kommazahlen -> 2 wird 2.0 (nicht in int-Anweisungen, Array-Indizes, #define, for-Köpfen mit int)
+  function floatLiterals(code) {
+    const m = mask(code), skip = new Uint8Array(m.length);
+    const mark = (a, b) => { for (let i = Math.max(0, a); i < Math.min(m.length, b); i++) skip[i] = 1; };
+    for (const r of m.matchAll(/^[ \t]*#[^\n]*/gm)) mark(r.index, r.index + r[0].length);
+    for (const r of m.matchAll(/\[[^\[\]\n]*\]/g)) mark(r.index, r.index + r[0].length);
+    for (const r of m.matchAll(/\bfor\s*\(/g)) {                                   // for-Köpfe mit int
+      let d = 0, j = r.index + r[0].length - 1;
+      for (; j < m.length; j++) { if (m[j] === '(') d++; else if (m[j] === ')' && --d === 0) break; }
+      if (/\b(?:int|uint)\b/.test(m.slice(r.index, j))) mark(r.index, j);
+    }
+    // Anweisungen mit int-Typen oder Ganzzahl-Operatoren
+    let st = 0;
+    for (let i = 0; i <= m.length; i++) {
+      if (i === m.length || m[i] === ';' || m[i] === '{' || m[i] === '}') {
+        const seg = m.slice(st, i);
+        if (/\b(?:int|uint|ivec[234]|uvec[234]|case|switch)\b|[%^]|<<|>>|&(?!&)|\|(?!\|)/.test(seg)) mark(st, i);
+        st = i + 1;
+      }
+    }
+    let out = '', last = 0;
+    for (const r of m.matchAll(/(?<![\w.])\d+(?![\w.])/g)) {
+      if (skip[r.index]) continue;
+      out += code.slice(last, r.index) + r[0] + '.0'; last = r.index + r[0].length;
+    }
+    return out + code.slice(last);
+  }
+  // Varianten in sinnvoller Reihenfolge (einzeln und kombiniert), ohne Dubletten und ohne unveränderte
+  function rescue(code) {
+    const steps = { prototypes: ['Prototypen ergänzt', prototypes], hoist: ['verschachtelte Funktionen herausgelöst', hoist], braces: ['Klammern ergänzt', braces],
+      loops: ['Schleifenzähler als Kommazahl', floatLoops], literals: ['Ganzzahlen als Kommazahlen', floatLiterals] };
+    const plans = [['literals'], ['loops'], ['loops', 'literals'], ['prototypes'], ['hoist'], ['hoist', 'prototypes'], ['braces'], ['prototypes', 'loops', 'literals'],
+      ['hoist', 'prototypes', 'loops', 'literals'], ['braces', 'hoist', 'prototypes', 'loops', 'literals']];
+    const seen = new Set([code]), out = [];
+    for (const plan of plans) {
+      let c = code; const fixes = [];
+      for (const k of plan) { const n = steps[k][1](c); if (n !== c) { c = n; fixes.push(steps[k][0]); } }
+      if (fixes.length && !seen.has(c)) { seen.add(c); out.push({ code: c, fixes }); }
+    }
+    return out;
+  }
+
+  return { PRELUDE, body, source, pre, isToy, tidy, helpers, rescue, _t: { prototypes, hoist, braces, floatLoops, floatLiterals, functions }, uniforms, uniformName, staticCheck, localizeLog, codeLineOffset };
 })();

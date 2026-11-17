@@ -103,6 +103,7 @@ CG.ai = CG.ai || {};
       const r0 = d[0], g0 = d[1], b0 = d[2];
       let diff = 0, sum = 0;
       const N = 16, grid = new Array(N * N).fill(0), cnt = new Array(N * N).fill(0), rgb = new Array(N * N * 3).fill(0), hist = new Array(64).fill(0);
+      const cols = new Uint32Array(32768);                     // Farben auf 5 Bit je Kanal
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const i = (y * w + x) * 4, l = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / 255;
         if (Math.abs(d[i] - r0) + Math.abs(d[i + 1] - g0) + Math.abs(d[i + 2] - b0) > 12) diff++;
@@ -110,11 +111,16 @@ CG.ai = CG.ai || {};
         const gi = Math.min(N - 1, (y * N / h) | 0) * N + Math.min(N - 1, (x * N / w) | 0);
         grid[gi] += l; cnt[gi]++;
         hist[Math.min(63, (l * 64) | 0)]++;
+        cols[(d[i] >> 3) << 10 | (d[i + 1] >> 3) << 5 | (d[i + 2] >> 3)]++;
         rgb[gi * 3] += d[i] / 255; rgb[gi * 3 + 1] += d[i + 1] / 255; rgb[gi * 3 + 2] += d[i + 2] / 255;
       }
       // Helligkeitsspanne zwischen 2 % und 98 % der Pixel (robust gegen einzelne Ausreißer)
       const total = w * h, q = f => { let acc = 0; for (let k = 0; k < 64; k++) { acc += hist[k]; if (acc >= f * total) return k / 63; } return 1; };
-      return { nonUniform: diff / total, mean: sum / total, spread: q(0.98) - q(0.02), grid: grid.map((v, i) => v / Math.max(1, cnt[i])),
+      // Anteil der häufigsten Farbe: 1 = alles eine Farbe. Kleine helle Formen auf dunklem Grund zählen mit (anders als die Spanne)
+      let modeN = 0, mode = 0; for (let k = 0; k < cols.length; k++) if (cols[k] > modeN) { modeN = cols[k]; mode = k; }
+      const hex = v => (((v & 31) << 3) | 4).toString(16).padStart(2, '0');
+      return { nonUniform: diff / total, mean: sum / total, spread: q(0.98) - q(0.02), flat: modeN / total, modeColor: '#' + hex(mode >> 10) + hex(mode >> 5) + hex(mode),
+        grid: grid.map((v, i) => v / Math.max(1, cnt[i])),
         rgb: rgb.map((v, i) => v / Math.max(1, cnt[(i / 3) | 0])) };
     }
 

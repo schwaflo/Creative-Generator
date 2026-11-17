@@ -88,18 +88,18 @@ CG.ai.pipeline = (() => {
       let res;
       try {
         res = await C().chat({
-          model: st.model, messages, schema: CG.ai.schema.SHADER, schemaName: 'shader_generator',
+          model: st.model, messages, code: true,                // freie Antwort (kein JSON-Zwang), keine Wiederholungsstrafe
           // Reparatur: mehr Variation, sonst kommt fast dieselbe Antwort zurück
           temperature: fresh ? Math.max(0.8, c.temperature) : fixing ? Math.max(0.6, c.temperature) : c.temperature,
           numCtx: c.numCtx, maxTokens: c.maxTokens, think: thinkOpt(st.model), noThink: !c.think, keepAlive: '10m',
         }, { signal: d.signal, onChunk: (t, n) => onEvent({ type: 'tokens', n }) });
       } finally { d.done(); }
-      const j = CG.ai.parse.extractJson(res.text) || {};
+      const f = CG.ai.parse.extractFunction(res.text);
       const answer = {
-        title: String(j.title || st.title || '').slice(0, 60),
-        notes: String(j.notes || '').slice(0, 4000),
-        params: Array.isArray(j.params) ? j.params : [],
-        shader: CG.ai.parse.extractShader(j.shader != null ? String(j.shader) : res.text) || '',
+        title: String(f.title || st.title || '').slice(0, 60),
+        notes: String(f.notes || '').slice(0, 4000),
+        params: Array.isArray(f.params) ? f.params : [],
+        shader: CG.ai.parse.extractShader(f.shader) || '',
       };
       const td = CG.ai.shader.tidy(answer.params, answer.shader, prevParams);
       answer.params = td.params; answer.shader = td.code;
@@ -107,7 +107,8 @@ CG.ai.pipeline = (() => {
       onEvent({ type: 'notes', round, notes: answer.notes, title: answer.title, fixes: td.fixes });
       const v = await CG.ai.validate.runShader(answer.params, answer.shader, { sandbox: st.box, aspect, renderMs: c.timeouts.renderMs,
         onStep: step => onEvent({ type: 'step', step }) });
-      if (v.ok) { onEvent({ type: 'ok', round, warnings: v.warnings }); return { answer: { ...answer, params: v.params }, params: v.params, code: answer.shader, warnings: v.warnings }; }
+      if (v.code && v.code !== answer.shader) answer.shader = v.code;    // von der App gerettet (z. B. Ganzzahlen, Prototypen)
+      if (v.ok) { onEvent({ type: 'ok', round, warnings: v.warnings, fixes: v.fixes || [] }); return { answer: { ...answer, params: v.params }, params: v.params, code: answer.shader, warnings: v.warnings }; }
       const last = --st.fixesLeft < 0;
       onEvent({ type: 'failed', round, errors: v.errors, attempt: st.repairs + 1, max: st.maxFixes, last });
       if (last) return null;

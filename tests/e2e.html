@@ -119,7 +119,6 @@ it('OpenAI-kompatible Schnittstelle (/v1): Modelle, Bild → Funktion', async ()
   const s = await AI.client.status();
   assert.ok(s.ok && s.models.length, 'keine Modelle über /v1/models');
   await fullRun('openai');
-  assert.equal(AI.client._levels[OLLAMA + '|' + AI.config.model], 'json_schema');
 });
 
 it('Einstellungen wiederhergestellt', async () => {

@@ -63,5 +63,32 @@ CG.ai.parse = (() => {
     return s.trim() ? s.trim() + '\n' : null;
   }
 
-  return { extractCode, extractJson, extractGenerated, extractShader };
+  /* Antwort des Modells: TITLE-/NOTES-Zeilen, Regler als json-Block, Shader als glsl-Block.
+     Robust gegen Varianten (fett, deutsch, Block ohne Sprache, abgeschnittener letzter Block, doch ein JSON-Objekt). */
+  function extractFunction(text) {
+    const t = String(text || '').replace(/\r\n?/g, '\n');
+    const blocks = [...t.matchAll(/```[ \t]*([\w+-]*)[^\n]*\n([\s\S]*?)(?:\n[ \t]*```|$(?![\s\S]))/g)].map(m => ({ lang: m[1].toLowerCase(), body: m[2], at: m.index }));
+    const isShader = b => /\bvoid\s+mainImage\s*\(|\bvec3\s+image\s*\(/.test(b.body);
+    const field = name => { const m = t.match(new RegExp('^[ \\t*#>-]*(?:' + name + ')[ \\t*]*[:：][ \\t*]*(.*)$', 'im')); return m ? m[1].replace(/\*+/g, '').replace(/^["„“']|["“”']$/g, '').trim() : ''; };
+    const out = { title: field('TITLE|Titel|Title|Name'), notes: '', params: [], shader: '', format: 'blocks' };
+    const nm = t.match(/^[ \t*#>-]*(?:NOTES|Notizen|Notes)[ \t*]*[:：]([\s\S]*?)(?=```|^[ \t*#>-]*(?:TITLE|Titel)\b|$(?![\s\S]))/im);
+    if (nm) out.notes = nm[1].replace(/\*+/g, '').trim();
+    const sh = blocks.filter(isShader);
+    const code = sh.length ? sh[sh.length - 1] : blocks.find(b => /^(glsl|frag|frg|c|cpp|hlsl|shader)$/.test(b.lang));
+    if (code) out.shader = code.body;
+    const pb = blocks.find(b => b !== code && /^(json|js|javascript|json5)$/.test(b.lang)) || blocks.find(b => b !== code && /^\s*[\[{]/.test(b.body) && !isShader(b));
+    if (pb) {
+      let j = null; try { j = JSON.parse(pb.body); } catch (e) { j = extractJson(pb.body) || (/^\s*\[/.test(pb.body) ? extractJson('{"p":' + pb.body + '}') : null); if (j && j.p) j = j.p; }
+      out.params = Array.isArray(j) ? j : j && Array.isArray(j.params) ? j.params : j && Array.isArray(j.controls) ? j.controls : [];
+    }
+    // doch als JSON-Objekt geantwortet (ältere Antwortform)
+    if (!out.shader) {
+      const j = extractJson(t);
+      if (j && typeof j.shader === 'string') { out.shader = j.shader; out.params = Array.isArray(j.params) ? j.params : out.params; out.title = out.title || j.title || ''; out.notes = out.notes || j.notes || ''; out.format = 'json'; }
+    }
+    if (!out.shader && /\bvoid\s+mainImage\s*\(/.test(t)) { out.shader = t.slice(t.search(/(?:[\w]+\s+[\w]+\s*\([^)]*\)\s*\{[\s\S]*)?\bvoid\s+mainImage\s*\(/)); out.format = 'raw'; }
+    return out;
+  }
+
+  return { extractCode, extractJson, extractGenerated, extractShader, extractFunction };
 })();

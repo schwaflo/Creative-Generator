@@ -59,7 +59,7 @@ Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 ### Ablauf
 
 Der Generator ist **nur das Interface**: Die KI baut die Funktion – einen animierten Shader samt eigener Regler.
-Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v2`) erklärt dem Modell genau, wie die App aus seiner Parameterliste
+Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v3`) erklärt dem Modell genau, wie die App aus seiner Parameterliste
 Regler, Dropdowns, Schalter, Farben und den Seed baut und wie sie im Shader ankommen. Alles Gestalterische entscheidet das Modell.
 
 **Drei Wege zur Aufgabe** – es funktioniert mit jedem Modell:
@@ -71,12 +71,21 @@ Regler, Dropdowns, Schalter, Farben und den Seed baut und wie sie im Shader anko
 | Nur Text | kein Bild | Die Funktion entsteht nur aus dem geschriebenen Auftrag |
 
 1. **Auftrag**: optional ein Referenzbild, dazu Wünsche bzw. die Beschreibung, was entstehen soll. Der vollständige Prompt ist editierbar.
-2. **Funktion**: Das Modell antwortet mit einem JSON `{title, notes, params, shader}` (Shadertoy-Stil: `mainImage`, `iResolution`, `iTime`, `iLoop`).
+2. **Funktion**: Das Modell antwortet frei mit einer `TITLE`- und `NOTES`-Zeile, den Reglern als `json`-Block und dem Shader als
+   `glsl`-Block (Shadertoy-Stil: `mainImage`, `iResolution`, `iTime`, `iLoop`). Kein erzwungenes JSON-Objekt: Code als maskierter
+   JSON-String schreiben Modelle messbar schlechter. Antwortet ein Modell doch als JSON, liest die App das ebenfalls.
 3. **Prüfung** in der Sandbox (Worker mit WebGL2). Zurück ans Modell gehen nur echte Fehler – kompiliert nicht
    (mit Codezeile), Bild leer, viel zu langsam – bis zu `repairAttempts` Mal; hängt das Modell am selben Fehler, bricht die App früher ab.
    Im Protokoll steht dafür eine einzige Zeile („Modell bessert nach (2/3)“), die Fehlertexte sind aufklappbar.
 
 **Damit möglichst wenige Fehler entstehen:**
+- Beim Code-Schreiben sind Wiederholungsstrafen aus (`presence_penalty`/`frequency_penalty` 0, `repeat_penalty` 1). Manche
+  Modelle bringen z. B. `presence_penalty 1.5` mit – in Code kommen dieselben Wörter ständig vor, das Modell weicht dann auf
+  erfundene Namen aus.
+- Kompiliert ein Shader nicht, probiert die App zuerst mechanische Korrekturen und übernimmt sie nur, wenn der Shader danach
+  kompiliert: Ganzzahlen in Rechnungen mit Kommazahlen (`2` → `2.0`), `int`-Schleifenzähler (`pow(0.5, i)`), Funktionen, die
+  vor ihrer Definition benutzt werden (Prototypen), Funktionen innerhalb von Funktionen, fehlende schließende Klammern.
+  Erst was dann noch fehlt, geht ans Modell.
 - Der Auftrag nennt die typischen GLSL-Stolperfallen und enthält ein kurzes, korrektes Beispiel (nur für Format und Sprache).
 - Die App stellt übliche Hilfsfunktionen bereit, die Modelle oft aufrufen, ohne sie passend zu definieren: `hash`, `noise`, `fbm`
   (jeweils für mehrere Argumenttypen), `rot`, `smin`, `palette`. Eigene Fassungen des Modells haben Vorrang.

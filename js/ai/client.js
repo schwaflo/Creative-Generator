@@ -128,6 +128,9 @@ CG.ai.client = (() => {
     if (o.maxTokens) body.options.num_predict = o.maxTokens;      // sonst kappen manche Motoren (MLX) bei ~2048 Token
     if (o.keepAlive !== undefined) body.keep_alive = o.keepAlive;
     if (o.think !== undefined) body.think = o.think;
+    // Code: keine Strafen für Wiederholungen. Manche Modelle bringen z. B. presence_penalty 1.5 mit – in Code kommen dieselben
+    // Wörter (vec3, float, Variablennamen) ständig vor; mit Strafe weicht das Modell auf erfundene Namen aus (frac statt fract …)
+    if (o.code) Object.assign(body.options, { presence_penalty: 0, frequency_penalty: 0, repeat_penalty: 1 });
     let useFormat = !!o.schema && levels[levelKey(o.model)] !== 'text';
     for (;;) {
       const b = useFormat ? { ...body, format: o.schema } : (o.schema ? { ...body, messages: withHint(o.messages, o.schema) } : body);
@@ -164,6 +167,7 @@ CG.ai.client = (() => {
       const body = { model: o.model, stream: true, messages: level === 'text' && o.schema ? withHint(messages, o.schema) : level === 'json_object' ? withHint(messages, o.schema) : messages };
       if (o.temperature !== undefined) body.temperature = o.temperature;
       if (o.maxTokens) body.max_tokens = o.maxTokens;
+      if (o.code) { body.presence_penalty = 0; body.frequency_penalty = 0; }
       if (noThink) body.reasoning_effort = 'none';
       if (level === 'json_schema') body.response_format = { type: 'json_schema', json_schema: { name: o.schemaName || 'antwort', strict: true, schema: o.schema } };
       if (level === 'json_object') body.response_format = { type: 'json_object' };

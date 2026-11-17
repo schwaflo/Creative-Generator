@@ -358,6 +358,7 @@ describe('Prompt', () => {
   it('Nächste Runde: Fehlerliste, eigener Bildvergleich oder Text-Kritik des zweiten Modells', () => {
     const base = P.messages('T', 'IMG'), a = { title: 'X', notes: 'n', params: [], shader: 's' };
     const look = P.feedback(base, a, { compareBase64: 'CMP' });
+    assert.match(look[2].content, /^TITLE: X\nNOTES: n\n```json/); assert.match(look[3].content, /same format/);
     assert.equal(look.length, 4); assert.deepEqual(look[3].images, ['CMP']); assert.match(look[3].content, /LEFT = the reference/);
     const err = P.feedback(base, a, { errors: ['Fehler A'], compareBase64: 'CMP' });
     assert.equal(err[3].images, undefined); assert.match(err[3].content, /- Fehler A/);
@@ -375,10 +376,26 @@ describe('Prompt', () => {
   it('Auftrag nennt Sprachregeln und Hilfsfunktionen und enthält ein kurzes Beispiel', () => {
     const t = P.text({ wishes: 'x', source: 'text' });
     assert.match(t, /2\.0, not 2/); assert.match(t, /not frac, lerp/); assert.match(t, /hash\(float \| vec2 \| vec3\)/); assert.match(t, /fbm\(vec2 \| vec3\)/);
-    assert.match(t, /"title":"Farbwolken"/);
+    assert.match(t, /TITLE: Farbwolken/); assert.match(t, /```json\n\[/); assert.match(t, /```glsl\nvoid mainImage/);
   });
-  it('Antwort-Schema verlangt Titel, Notizen, Regler, Shader', () => {
-    assert.deepEqual(AI.schema.SHADER.required, ['title', 'notes', 'params', 'shader']);
+  it('Antwortform: TITLE/NOTES + json-Block + glsl-Block, kein JSON-Zwang', () => {
+    const t = P.text({ wishes: 'x', source: 'text' });
+    assert.match(t, /Answer in exactly this format/); assert.match(t, /TITLE: <a short German name>/);
+    assert.ok(!/Answer with one JSON object/.test(t)); assert.ok(!/JSON object/.test(P.SYSTEM));
+    const a = { title: 'Wolken', notes: 'zwei\nZeilen', params: [{ id: 'a', type: 'range' }], shader: 'void mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }' };
+    const back = AI.parse.extractFunction(P.format(a));
+    assert.equal(back.title, 'Wolken'); assert.equal(back.notes, 'zwei Zeilen'); assert.deepEqual(back.params, a.params); assert.equal(back.shader.trim(), a.shader);
+  });
+  it('Antwort lesen: Varianten der Modelle (fett, deutsch, Block ohne Sprache, abgeschnitten, doch JSON)', () => {
+    const X = AI.parse.extractFunction;
+    const a = X('**TITLE:** "Tinte"\n**NOTES:** fließt\n\n```json\n[{"id": "s", "type": "range"}]\n```\n\nHier der Code:\n```\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }\n```');
+    assert.equal(a.title, 'Tinte'); assert.equal(a.notes, 'fließt'); assert.equal(a.params.length, 1); assert.match(a.shader, /^void mainImage/);
+    const b = X('Titel: Wellen\n```glsl\nfloat w(vec2 p){ return p.x; }\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(w(c));');
+    assert.equal(b.title, 'Wellen'); assert.match(b.shader, /float w\(vec2 p\)/); assert.deepEqual(b.params, []);
+    const c = X('{"title": "Alt", "notes": "n", "params": [{"id": "k", "type": "toggle"}], "shader": "void mainImage(out vec4 f, in vec2 c){ f = vec4(0.5); }"}');
+    assert.equal(c.format, 'json'); assert.equal(c.title, 'Alt'); assert.equal(c.params[0].id, 'k'); assert.match(c.shader, /mainImage/);
+    const d = X('TITLE: A\n```json\n{"params": [{"id": "z", "type": "seed"}]}\n```\n```glsl\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(0.0); }\n```');
+    assert.equal(d.params[0].id, 'z');
   });
 });
 
@@ -440,6 +457,33 @@ describe('Shader', () => {
     assert.ok(v.ok, v.errors.join(' | '));
     const v2 = await AI.validate.runShader([], 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.y; uv *= rot(0.4); fragColor = vec4(palette(fbm(vec3(uv * 4.0, iTime)) + hash(floor(uv * 3.0)), vec3(0.5), vec3(0.5), vec3(1.0), vec3(0.0, 0.33, 0.67)), 1.0); }', { sandbox: box });
     assert.ok(v2.ok, v2.errors.join(' | '));
+  });
+  it('Rettung: Ganzzahlen in Rechnungen, int-Schleifen, Funktionen vor Definition, verschachtelte Funktionen', async () => {
+    const run = c => AI.validate.runShader([], c, { sandbox: box });
+    const M = b => 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; ' + b + ' }';
+    // pow(0.5, i) mit int-Schleife
+    const a = await run(M('float v = 0.0; for (int i = 0; i < 5; i++) { v += pow(0.5, i) * sin(uv.x * 9.0 + float(i)); } fragColor = vec4(vec3(0.5 + 0.5 * v), 1.0);'));
+    assert.ok(a.ok, a.errors.join(' | ')); assert.match(a.code, /for \(float i = float\(0\); i < float\(5\); i \+= 1\.0\)/); assert.ok(a.fixes.length);
+    // Ganzzahl mal Kommazahl
+    const b = await run(M('float k = uv.x * 2 + uv.y * 3; fragColor = vec4(vec3(fract(k)), 1.0);'));
+    assert.ok(b.ok, b.errors.join(' | ')); assert.match(b.code, /uv\.x \* 2\.0 \+ uv\.y \* 3\.0/);
+    // Funktion benutzt, bevor sie definiert ist
+    const c = await run(M('fragColor = vec4(vec3(wave(uv)), 1.0);') + '\nfloat wave(vec2 p){ return 0.5 + 0.5 * sin(p.x * 20.0 + iTime); }');
+    assert.ok(c.ok, c.errors.join(' | ')); assert.match(c.code, /^float wave\(vec2 p\);/);
+    // Funktion innerhalb von mainImage
+    const d = await run('void mainImage(out vec4 fragColor, in vec2 fragCoord){\n  float ring(vec2 p){ return fract(length(p) * 8.0); }\n  vec2 uv = fragCoord / iResolution.y;\n  fragColor = vec4(vec3(ring(uv - 0.5)), 1.0);\n}');
+    assert.ok(d.ok, d.errors.join(' | ')); assert.match(d.code, /^\s*float ring\(vec2 p\)/);
+    // int-Anweisungen und Array-Indizes bleiben unverändert
+    const L = AI.shader._t.floatLiterals('int n = 3; float a[4]; a[2] = 1; float x = y * 2; for (int i = 0; i < 4; i++) { x += a[i]; } int m = n % 2;');
+    assert.equal(L, 'int n = 3; float a[4]; a[2] = 1.0; float x = y * 2.0; for (int i = 0; i < 4; i++) { x += a[i]; } int m = n % 2;');
+  });
+  it('Rettung greift nur bei Fehlern – lauffähiger Code bleibt unverändert, unrettbarer meldet den Originalfehler', async () => {
+    const ok = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; fragColor = vec4(uv, 0.5 + 0.5 * sin(iTime), 1.0); }';
+    const v = await AI.validate.runShader([], ok, { sandbox: box });
+    assert.ok(v.ok); assert.equal(v.code, ok); assert.deepEqual(v.fixes, []);
+    const bad = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ fragColor = vec4(nichtda(fragCoord), 1.0); }';
+    const w = await AI.validate.runShader([], bad, { sandbox: box });
+    assert.equal(w.ok, false); assert.match(w.errors[0], /nichtda/);
   });
   it('Im Shader benutzte, aber nicht angelegte Regler werden ergänzt (Schieberegler oder Farbe)', async () => {
     const code = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; fragColor = vec4(mix(vec3(0.0), u_ink_color, fract(uv.x * 6.0 * u_scale + iTime * u_speed)), 1.0); }';
@@ -524,7 +568,12 @@ describe('Shader', () => {
   it('Fast schwarzes Bild mit einem Ausreißer-Pixel gilt als leer', async () => {
     const v = await AI.validate.runShader([{ id: 'seed', label: 'Seed', type: 'seed', default: 1 }],
       'void mainImage(out vec4 f, in vec2 c){ f = vec4(vec3(c.x < 1.0 && c.y < 1.0 ? 1.0 : 0.004 * fract(c.x * 0.37)), 1.0); }', { sandbox: box });
-    assert.match(v.errors[0], /einfarbig bzw\. schwarz/);
+    assert.match(v.errors[0], /einfarbig: 100,0 % der Pixel haben dieselbe Farbe \(#040404\)/);
+  });
+  it('Kleine helle Formen auf schwarzem Grund gelten nicht als leer', async () => {
+    const dots = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.y; vec2 g = fract(uv * 6.0) - 0.5;\n  float d = smoothstep(0.035, 0.02, length(g)) * (0.6 + 0.4 * sin(iTime)); fragColor = vec4(vec3(d) * vec3(1.0, 0.8, 0.4), 1.0); }';
+    const v = await AI.validate.runShader([], dots, { sandbox: box, aspect: 16 / 9 });
+    assert.ok(v.ok, v.errors.join(' | '));
   });
   it('Einfarbiges Bild wird erkannt', async () => {
     const v = await AI.validate.runShader([{ id: 'c', label: 'C', type: 'color', default: '#336699' }], 'vec3 image(vec2 uv, vec2 p, float t) { return u_c; }', { sandbox: box });

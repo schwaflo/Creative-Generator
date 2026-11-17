@@ -6,10 +6,17 @@
    Bei Änderungen am Auftrag: VERSION erhöhen (wird mit jedem Generator gespeichert). */
 CG.ai = CG.ai || {};
 CG.ai.prompt = (() => {
-  const VERSION = 'funktion-v2';
+  const VERSION = 'funktion-v3';
   const SLOT = '{{BILDBESCHREIBUNG}}';             // wird durch die Beschreibung des zweiten Modells ersetzt
 
-  const SYSTEM = 'You are a creative coder. You build visual functions (animated GLSL shaders with their own controls) for a generative design app. You always answer with exactly one JSON object {"title", "notes", "params", "shader"}.';
+  const SYSTEM = 'You are a creative coder. You build visual functions (animated GLSL shaders with their own controls) for a generative design app. You answer in the format the user describes: a TITLE line, a NOTES line, the controls as a json code block and the complete shader as a glsl code block.';
+
+  /* Antwortform: freier Text mit zwei Code-Blöcken statt eines JSON-Objekts – Code im JSON-String (alles maskiert,
+     Grammatik-Zwang beim Erzeugen) schreiben Modelle messbar schlechter. */
+  const F = '```';
+  function format(a) {
+    return `TITLE: ${a.title || ''}\nNOTES: ${String(a.notes || '').replace(/\s*\n\s*/g, ' ')}\n${F}json\n${JSON.stringify(a.params || [], null, 1)}\n${F}\n${F}glsl\n${String(a.shader || '').trim()}\n${F}`;
+  }
 
   // kurzes, korrektes Beispiel (zeigt Format, Dropdown und Hilfsfunktionen – kein gestalterisches Vorbild)
   const EXAMPLE = JSON.stringify({
@@ -35,13 +42,17 @@ CG.ai.prompt = (() => {
   // Das Interface: was die App bereitstellt und wie Regler funktionieren
   const INTERFACE = `The app is only the interface: it shows your function live, builds the control panel from your parameter list, plays it as a loop and exports images and video. Everything visual is your decision.
 
-Answer with one JSON object:
-- "title": a short German name
-- "notes": a few sentences – what you build and how
-- "params": the list of controls (see below) – you decide which and how many
-- "shader": the GLSL code as one string
+Answer in exactly this format – two lines, then two code blocks:
+TITLE: <a short German name>
+NOTES: <a few sentences – what you build and how>
+${F}json
+[ the list of controls (see below) – you decide which and how many ]
+${F}
+${F}glsl
+<the complete shader code>
+${F}
 
-How controls work – every entry in "params" becomes one control in the panel AND one uniform in your shader, named u_<id>:
+How controls work – every entry in the json list becomes one control in the panel AND one uniform in your shader, named u_<id>:
 - Slider:   {"id": "speed", "label": "Tempo", "type": "range", "min": 0, "max": 2, "step": 0.01, "default": 1}
             -> uniform float u_speed (the current slider value)
 - Color:    {"id": "ink", "label": "Tinte", "type": "color", "default": "#2ec4b6"}
@@ -54,7 +65,7 @@ How controls work – every entry in "params" becomes one control in the panel A
 - Seed:     {"id": "seed", "label": "Seed", "type": "seed", "default": 7}
             -> uniform float u_seed (0..9999; the user rolls it to get a new random variation)
 - Optional "group": "Form" (any short German name): controls with the same group share one section of the panel. Colors always appear together as a palette.
-- "id": letters, digits and underscore only. "label": German. The app declares the uniforms – do not declare them yourself. Every u_<id> you use in the shader must be in "params".
+- "id": letters, digits and underscore only. "label": German. The app declares the uniforms – do not declare them yourself. Every u_<id> you use in the shader must be in the json list.
 
 The shader – Shadertoy style, GLSL ES 3.0:
   void mainImage(out vec4 fragColor, in vec2 fragCoord) { … }   plus any helper functions you write yourself.
@@ -71,7 +82,7 @@ GLSL ES is strict – these mistakes break shaders most often, avoid them:
 - Global variables must be constant; compute everything that uses uniforms or iTime inside a function.
 
 Example of a correct answer (only to show the format – build something of your own):
-${EXAMPLE}`;
+${format(JSON.parse(EXAMPLE))}`;
 
   // Aufgabe je nach Weg
   function task({ source, wishes }) {
@@ -109,21 +120,22 @@ Plain text, about 150–250 words, no introduction.`;
 
   // Nächste Runde im selben Gespräch: Fehler beheben · selbst vergleichen (Bild) · Kritik des zweiten Modells (Text)
   function feedback(history, answer, { compareBase64, critique, errors, warnings }) {
-    const tail = `${warnings && warnings.length ? `\nThe automatic test also noticed:\n${warnings.map(w => '- ' + w).join('\n')}` : ''}\nAnswer with the full JSON {"title", "notes", "params", "shader"}.`;
+    const again = 'Answer again in the same format: TITLE, NOTES, the controls as json block, the complete shader as glsl block.';
+    const tail = `${warnings && warnings.length ? `\nThe automatic test also noticed:\n${warnings.map(w => '- ' + w).join('\n')}` : ''}\n${again}`;
     let content;
-    if (errors && errors.length) content = `Your shader does not work yet. The automatic test reports:\n${errors.map(e => '- ' + e).join('\n')}\nFix all of it. Answer with the full JSON {"title", "notes", "params", "shader"} again.`;
+    if (errors && errors.length) content = `Your shader does not compile or run yet. The automatic test reports:\n${errors.map(e => '- ' + e).join('\n')}\nFix exactly these errors and keep everything else unchanged. ${again}`;
     else if (critique) content = `A vision model compared the reference with what your shader renders:\n${critique}\nImprove the function accordingly. Keep everything that already works.${tail}`;
     else content = `Attached: LEFT = the reference, RIGHT = what your current shader renders. Compare them carefully yourself: what is still different in composition, shapes, colors, light and detail? Write that into "notes", then improve the function. Keep everything that already works.${tail}`;
     const next = { role: 'user', content };
     if (compareBase64 && !critique && !(errors && errors.length)) next.images = [compareBase64];
-    return [...history, { role: 'assistant', content: JSON.stringify(answer) }, next];
+    return [...history, { role: 'assistant', content: format(answer) }, next];
   }
 
   /* Bestehenden Generator per Prompt ändern: Das Modell bekommt die aktuelle Funktion (Regler + Shader),
      den Änderungswunsch und – wenn es Bilder lesen kann – ein Bild des aktuellen Ergebnisses. */
   function improveText({ gen, request }) {
-    const current = { title: gen.name, params: gen.params, shader: gen.code };
-    return `Task: change an existing function of the app. Here is the current function:\n${JSON.stringify(current, null, 1)}\n\nChange request: ${(request || '').trim()}\n\nApply the request. Keep everything else as it is; keep the ids of existing controls, add or remove controls only if the request needs it. Answer with the full updated JSON.\n\n${INTERFACE}`;
+    const current = { title: gen.name, notes: '(current version)', params: gen.params, shader: gen.code };
+    return `Task: change an existing function of the app. Here is the current function:\n${format(current)}\n\nChange request: ${(request || '').trim()}\n\nApply the request. Keep everything else as it is; keep the ids of existing controls, add or remove controls only if the request needs it. Answer with the complete updated function.\n\n${INTERFACE}`;
   }
   function improveMessages(promptText, imageBase64) {
     const user = { role: 'user', content: promptText + (imageBase64 ? '\n\nAttached: what the current function renders.' : '') };
@@ -131,5 +143,5 @@ Plain text, about 150–250 words, no introduction.`;
     return [{ role: 'system', content: SYSTEM }, user];
   }
 
-  return { VERSION, SLOT, SYSTEM, INTERFACE, EXAMPLE, text, messages, describeMessages, critiqueMessages, feedback, improveText, improveMessages };
+  return { VERSION, SLOT, SYSTEM, INTERFACE, EXAMPLE, format, text, messages, describeMessages, critiqueMessages, feedback, improveText, improveMessages };
 })();
