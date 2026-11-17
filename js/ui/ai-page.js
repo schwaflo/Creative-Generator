@@ -1,13 +1,14 @@
 'use strict';
-/* Seite „KI“: Referenzbild + Wunsch -> Generator.
-   Das Modell ist Art Director: Es beschreibt das Bild als Rezept aus Ebenen; die App rendert und gleicht an (js/ai/recipe.js).
+/* Seite „KI“: Der Generator ist das Interface – das Modell baut die Funktion (Regler + Shader).
+   Aufgabe aus Bild (Modell sieht es selbst), aus der Beschreibung eines zweiten Modells oder nur aus Text.
+   Gespeicherte Generatoren lassen sich per Prompt ändern („Verbessern“).
    Der Browser spricht direkt mit dem KI-Server (Ollama oder OpenAI-kompatibel) – kein Server dazwischen. */
 CG.aiPage = (() => {
   const { el, esc, toast, store } = CG.util;
   const H = CG.haptics;
   const AI = () => CG.ai;
   let R = null;                                  // DOM-Referenzen
-  const S = { image: null, imageName: '', prompt: '', promptDirty: false, run: null, health: null };
+  const S = { image: null, imageName: '', prompt: '', promptDirty: false, run: null, health: null, edit: null };   // edit: Generator, der per Prompt geändert wird
 
   /* ---------- Aufbau ---------- */
   function init() {
@@ -24,19 +25,23 @@ CG.aiPage = (() => {
         <div class="pill ai-status">
           <span class="dot"></span><span class="st-text">Nicht verbunden</span>
           <span class="spacer"></span>
-          <label class="m-pick" title="Modell (muss Bilder lesen können)"><span>Modell</span><select data-m="model"></select></label>
+          <label class="m-pick" title="Dieses Modell baut die Funktion"><span>Modell</span><select data-m="model"></select></label>
+          <label class="m-pick" data-w="describe" title="Beschreibt das Referenzbild, wenn das Modell links keine Bilder lesen kann" hidden><span>Bild lesen</span><select data-m="describe"></select></label>
         </div>
         <div class="ai-hint" hidden></div>
       </div>
       <div class="ai-steps">
         <section class="ai-card">
-          <header><span class="num">1</span><h3>Referenz</h3></header>
-          <div class="drop" tabindex="0" role="button" aria-label="Referenzbild wählen">
+          <header><span class="num">1</span><h3 class="card-title">Auftrag</h3>
+            <button class="act" type="button" data-a="editoff" title="Verbessern beenden" hidden>${CG.icon('x')}</button></header>
+          <div class="drop" tabindex="0" role="button" aria-label="Referenzbild wählen (optional)">
             <img alt="" hidden>
-            <div class="drop-empty">${CG.icon('upload')}<span>Bild ablegen oder wählen</span></div>
+            <div class="drop-empty">${CG.icon('upload')}<span>Bild ablegen oder wählen (optional)</span></div>
+            <button class="act drop-x" type="button" data-a="noimage" title="Bild entfernen" hidden>${CG.icon('x')}</button>
             <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
           </div>
-          <textarea class="ai-text ai-wishes" rows="3" spellcheck="false" placeholder="Wünsche, z. B. sanfte Bewegung, mehr Tiefe, kräftigere Farben"></textarea>
+          <div class="ai-mode"></div>
+          <textarea class="ai-text ai-wishes" rows="3" spellcheck="false"></textarea>
           <div class="ai-row">
             <label class="ai-check"><input type="checkbox" data-a="review"><span>Prompt erst prüfen</span></label>
             <button class="btn primary" type="button" data-a="go">Generator erzeugen</button>
@@ -63,7 +68,8 @@ CG.aiPage = (() => {
 
     const q = s => root.querySelector(s);
     R = { root, status: q('.ai-status'), dot: q('.dot'), stText: q('.st-text'), hint: q('.ai-hint'),
-      mSel: q('[data-m=model]'),
+      mSel: q('[data-m=model]'), dSel: q('[data-m=describe]'), dWrap: q('[data-w=describe]'), mode: q('.ai-mode'),
+      title: q('.card-title'), editOff: q('[data-a=editoff]'), noImage: q('[data-a=noimage]'),
       drop: q('.drop'), img: q('.drop img'), file: q('.drop input'), wishes: q('.ai-wishes'), review: q('[data-a=review]'),
       go: q('[data-a=go]'), send: q('[data-a=send]'), prompt: q('.ai-prompt'),
       promptMeta: q('.prompt-meta'), run: q('.ai-run'), runTitle: q('.run-title'), runMeta: q('.run-meta'), bar: q('.run-bar i'),
@@ -71,8 +77,10 @@ CG.aiPage = (() => {
       server: q('[data-c=server]'), url: q('[data-c=url]'), key: q('[data-c=key]') };
 
     R.wishes.value = store.get('ai.wishes', '');
+    R.noImage.onclick = e => { e.stopPropagation(); clearImage(); };
+    R.editOff.onclick = () => setEdit(null);
     R.review.checked = store.get('ai.review', false);
-    R.wishes.addEventListener('input', () => { store.set('ai.wishes', R.wishes.value); if (!S.promptDirty) rebuildPrompt(); });
+    R.wishes.addEventListener('input', () => { if (!S.edit) store.set('ai.wishes', R.wishes.value); if (!S.promptDirty) rebuildPrompt(); });
     R.review.addEventListener('change', () => store.set('ai.review', R.review.checked));
 
     // Upload: Klick, Tastatur, Drag & Drop
@@ -105,7 +113,8 @@ CG.aiPage = (() => {
     R.url.addEventListener('keydown', e => { if (e.key === 'Enter') { st.set({ url: R.url.value.trim() }); refreshHealth(true); } });
     R.key.addEventListener('change', () => st.setKey(R.key.value));
     q('[data-a=connect]').onclick = () => { st.set({ url: R.url.value.trim() }); st.setKey(R.key.value); refreshHealth(true); };
-    R.mSel.addEventListener('change', () => { st.set({ model: R.mSel.value }); H.tick(); refreshHealth(); });
+    R.mSel.addEventListener('change', () => { st.set({ model: R.mSel.value }); H.tick(); S.promptDirty = false; refreshHealth(); });
+    R.dSel.addEventListener('change', () => { st.set({ describeModel: R.dSel.value }); H.tick(); S.promptDirty = false; updateMode(); });
     // Generatoren importieren
     const imp = q('[data-a=importFile]');
     q('[data-a=import]').onclick = () => imp.click();
@@ -160,11 +169,10 @@ CG.aiPage = (() => {
     if (h.missing.length) {
       const cmds = h.missing.map(m => m.cmd).filter(Boolean);
       hint(cmds.length ? 'Fehlende Modelle installieren:' : `Modell nicht auf dem Server: ${h.missing.map(m => '„' + esc(m.model) + '“').join(', ')}. Bitte oben ein vorhandenes Modell wählen oder es im Server laden.`, cmds);
-    } else if (vis && Array.isArray(vis.capabilities) && !vis.capabilities.includes('vision')) {
-      hint(`„${esc(cfg.model)}“ kann keine Bilder lesen. Wähle ein Modell mit Bildverständnis oder installiere eines:`, ['ollama pull gemma4:12b-mlx']);
     } else if (srv.api === 'openai' && /:11434$/.test(url)) {
       hint('Das ist Ollama. Mit dem Server-Typ „Ollama“ stehen Kontextgröße (num_ctx) und das automatische Entladen der Modelle zur Verfügung – über die OpenAI-Schnittstelle nutzt Ollama nur 4096 Token Kontext.');
     } else hint(null);
+    updateMode();
     if (manual) H.tick();
     return !h.missing.length;
   }
@@ -204,6 +212,51 @@ CG.aiPage = (() => {
       }).join('');
     };
     R.mSel.innerHTML = opts(cfg.model); R.mSel.value = cfg.model || '';
+    // zweites Modell nur zum Lesen des Bildes: Modelle mit Bildverständnis (bei unbekannten Fähigkeiten alle)
+    const knownCaps = h.models.some(m => Array.isArray(m.capabilities));
+    const readers = h.models.filter(m => m.name !== cfg.model && (!knownCaps || (Array.isArray(m.capabilities) && m.capabilities.includes('vision')))).map(m => m.name);
+    if (cfg.describeModel && !readers.includes(cfg.describeModel) && cfg.describeModel !== cfg.model) readers.unshift(cfg.describeModel);
+    R.dSel.innerHTML = '<option value="">– aus –</option>' + readers.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    R.dSel.value = readers.includes(cfg.describeModel) ? cfg.describeModel : '';
+  }
+
+  /* Welcher Weg gilt gerade? Zeigt es in der Auftragskarte und passt Platzhalter, Knopf und Prompt an. */
+  function updateMode() {
+    if (!R) return;
+    const pl = AI().pipeline.plan(!!S.image), m = esc(pl.model || 'Modell');
+    R.dWrap.hidden = pl.vision && !AI().config.describeModel;         // nur nötig, wenn das Modell keine Bilder liest
+    R.root.classList.toggle('editing', !!S.edit);
+    R.title.textContent = S.edit ? `Verbessern: ${S.edit.name}` : 'Auftrag';
+    R.editOff.hidden = !S.edit;
+    R.go.textContent = S.edit ? 'Verbessern' : 'Generator erzeugen';
+    R.noImage.hidden = !S.image;
+    let msg;
+    if (S.edit) msg = pl.vision ? `${m} bekommt die aktuelle Funktion und ein Bild des Ergebnisses.` : `${m} bekommt die aktuelle Funktion (Regler und Code).`;
+    else if (pl.source === 'image') msg = `${m} liest das Bild selbst.`;
+    else if (pl.source === 'description') msg = `${m} kann keine Bilder lesen – ${esc(pl.describer)} beschreibt das Bild.`;
+    else if (pl.imageUnused) msg = `${m} kann keine Bilder lesen. Wähle oben bei „Bild lesen“ ein Modell – sonst zählt nur dein Text.`;
+    else msg = 'Ohne Bild: Die Funktion entsteht nur aus deinem Text.';
+    R.mode.innerHTML = msg; R.mode.classList.toggle('warn', !S.edit && pl.imageUnused);
+    R.wishes.placeholder = S.edit ? 'Was soll sich ändern? Z. B. dünnere Linien, ein Dropdown für drei Farbstimmungen, langsamere Bewegung'
+      : pl.source === 'text' ? 'Was soll die Funktion zeigen? Z. B. fließende Tintenwolken in Blau und Gold mit Regler für Dichte und Tempo'
+      : 'Wünsche zum Bild, z. B. sanfte Bewegung, Farben einstellbar';
+    if (!S.promptDirty) rebuildPrompt();
+  }
+
+  /* Verbessern: bestehenden Generator wählen (null = zurück zum normalen Auftrag) */
+  function setEdit(gen) {
+    if (S.run) return;
+    S.edit = gen || null; S.promptDirty = false;
+    R.wishes.value = S.edit ? '' : store.get('ai.wishes', '');
+    updateMode();
+    if (S.edit) { R.wishes.focus(); R.root.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }
+  function edit(genId) {
+    init();
+    const fn = AI().registry.list().find(f => f.gen.id === genId);
+    if (!fn) return;
+    if (fn.gen.kind !== 'shader') return toast('Dieser ältere Generator lässt sich nicht per Prompt ändern');
+    CG.showPage('ai'); setEdit(fn.gen);
   }
 
   function hint(html, cmds) {
@@ -223,16 +276,22 @@ CG.aiPage = (() => {
       S.imageName = file.name;
       R.img.src = S.image.dataUrl; R.img.hidden = false;
       R.drop.classList.add('has');
-      S.promptDirty = false; rebuildPrompt();
+      S.promptDirty = false; updateMode();
       H.tick();
     } catch (e) { toast('Bild konnte nicht gelesen werden'); }
+  }
+  function clearImage() {
+    S.image = null; S.imageName = ''; R.img.hidden = true; R.img.removeAttribute('src'); R.drop.classList.remove('has');
+    S.promptDirty = false; updateMode();
   }
 
 
   /* ---------- Prompt ---------- */
   function rebuildPrompt() {
     if (!R) return;
-    S.prompt = S.image ? AI().prompt.text({ wishes: R.wishes.value, format: CG.state.format }) : '';
+    const P = AI().prompt, w = R.wishes.value;
+    if (S.edit) S.prompt = w.trim() ? P.improveText({ gen: S.edit, request: w }) : '';
+    else { const src = AI().pipeline.plan(!!S.image).source; S.prompt = src === 'text' && !w.trim() ? '' : P.text({ wishes: w, format: CG.state.format, source: src }); }
     R.prompt.value = S.prompt;
     promptMeta();
   }
@@ -273,51 +332,100 @@ CG.aiPage = (() => {
     refreshHealth();
   }
 
+  // Protokoll: Ereignisse aus dem Ablauf anzeigen
+  function logger(model) {
+    let askLi = null, stepLi = null, auxLi = null, fixLi = null, fails = [], corrected = [];
+    const setFix = (text, cls) => {
+      fixLi.className = cls;
+      fixLi.innerHTML = `<details class="notes"><summary>${esc(text)}</summary><div>${fails.map((f, i) => `<b>Versuch ${i + 1}</b><br>${f.map(esc).join('<br>')}`).join('<br><br>')}</div></details>`;
+    };
+    return ev => {
+      if (ev.type === 'describe') { auxLi = logItem(`${ev.model} beschreibt das Bild …`, 'act'); meta(''); }
+      if (ev.type === 'described') { setLi(auxLi, `${ev.model} hat das Bild beschrieben`, 'ok');
+        const li = logItem('', 'note'); li.innerHTML = `<details class="notes"><summary>Bildbeschreibung</summary><div>${esc(ev.text)}</div></details>`; }
+      if (ev.type === 'critique') { auxLi = logItem(`${ev.model} vergleicht Ergebnis und Referenz …`, 'act'); meta(''); }
+      if (ev.type === 'critiqued') { setLi(auxLi, `${ev.model} hat verglichen`, 'ok');
+        if (ev.text) { const li = logItem('', 'note'); li.innerHTML = `<details class="notes"><summary>Vergleich</summary><div>${esc(ev.text)}</div></details>`; } }
+      if (ev.type === 'ask') {
+        if (ev.fixing) { askLi = fixLi || logItem('Modell bessert nach …', 'act'); }
+        else askLi = logItem(ev.improve ? `${model} ändert die Funktion …` : ev.round ? `Runde ${ev.round + 1}/${ev.rounds}: ${model} verbessert nach dem Vergleich …` : `${model} baut die Funktion …`, 'act');
+        stepLi = null; meta('');
+      }
+      if (ev.type === 'tokens') meta(`${ev.n} Tokens`);
+      if (ev.type === 'notes') {
+        if (askLi !== fixLi) {
+          setLi(askLi, askLi.textContent.replace(' …', ''), 'ok');
+          if (ev.notes) {
+            const li = logItem('', 'note');
+            li.innerHTML = `<details class="notes"><summary>Notizen des Modells${ev.title ? ' · ' + esc(ev.title) : ''}</summary><div>${esc(ev.notes)}</div></details>`;
+          }
+        }
+        if (ev.fixes && ev.fixes.length) corrected = ev.fixes;
+        if (!fixLi) stepLi = logItem('Prüfung …', 'act');
+      }
+      if (ev.type === 'step' && stepLi) setLi(stepLi, `Prüfung: ${ev.step} …`, 'act');
+      if (ev.type === 'ok') {
+        const line = 'Prüfung bestanden' + (fixLi ? ` nach ${fails.length} Nachbesserung${fails.length === 1 ? '' : 'en'}` : '');
+        if (fixLi) { setFix(line, 'ok'); fixLi = null; fails = []; } else if (stepLi) setLi(stepLi, line, 'ok');
+        const notes = [...(corrected.length ? ['von der App korrigiert: ' + corrected.join(', ')] : []), ...ev.warnings];
+        if (notes.length) { const li = logItem('', 'note'); li.innerHTML = `<details class="notes"><summary>${notes.length} Hinweis${notes.length === 1 ? '' : 'e'}</summary><div>${notes.map(esc).join('<br>')}</div></details>`; }
+        corrected = [];
+      }
+      if (ev.type === 'look') logItem('Ergebnis dem Modell neben der Referenz gezeigt', 'ok');
+      // Fehler: eine einzige Zeile, die mitzählt – die Fehlertexte stehen aufklappbar dahinter
+      if (ev.type === 'failed') {
+        fails.push(ev.errors);
+        if (!fixLi) { fixLi = stepLi || logItem('', 'act'); stepLi = null; }
+        setFix(ev.last && ev.round ? 'Die Überarbeitung läuft nicht – die vorige Fassung bleibt' : ev.last ? `Die Funktion läuft nicht – nach ${fails.length - 1} Nachbesserung${fails.length === 2 ? '' : 'en'} aufgegeben` : `Die Funktion läuft noch nicht – Modell bessert nach (${ev.attempt}/${ev.max})`, ev.last && ev.round ? 'note' : ev.last ? 'bad' : 'act');
+      }
+      if (ev.type === 'stuck') setFix(ev.kept ? 'Modell hängt am selben Fehler – die letzte funktionierende Fassung bleibt' : 'Modell hängt am selben Fehler – neuer Anlauf', ev.kept ? 'note' : 'act');
+    };
+  }
+
   async function runFlow(generate) {
     if (S.run) return;
-    if (!S.image) { toast('Zuerst ein Referenzbild wählen'); R.drop.focus(); return; }
-    if (!generate) {                                       // „Prompt erst prüfen“
-      R.prompt.focus(); toast('Prompt prüfen und „Senden“ wählen'); return;
-    }
-    if (!(R.prompt.value || '').trim()) { toast('Prompt ist leer'); return; }
+    const P = AI().prompt, aspect = CG.state.format.w / CG.state.format.h;
+    if (!(R.prompt.value || '').trim()) { toast(S.edit ? 'Bitte schreiben, was sich ändern soll' : S.image ? 'Prompt ist leer' : 'Bitte ein Bild wählen oder schreiben, was entstehen soll'); R.wishes.focus(); return; }
+    const pl = AI().pipeline.plan(!!S.image);
+    const needsDescription = !S.edit && pl.source === 'description' && R.prompt.value.includes(P.SLOT);
+    if (!generate && !needsDescription) { R.prompt.focus(); toast('Prompt prüfen und „Senden“ wählen'); return; }
     const ok = await refreshHealth();
     if (!S.health || !S.health.ok) { toast('Keine Verbindung zum KI-Server'); return; }
     if (!ok) { toast('Das gewählte Modell ist nicht verfügbar'); return; }
 
-    const signal = startRun('Generator');
-    const model = AI().config.model;
+    const signal = startRun(S.edit ? 'Verbessern' : 'Generator');
+    const model = AI().config.model, log = logger(model);
     try {
+      // „Prompt erst prüfen“ mit zweitem Modell: erst beschreiben lassen, Beschreibung in den Prompt setzen, dann anhalten
+      if (!generate) {
+        const text = await AI().pipeline.describe(S.image.base64, { signal, onEvent: log });
+        R.prompt.value = S.prompt = R.prompt.value.split(P.SLOT).join(text); S.promptDirty = true;
+        R.runTitle.textContent = 'Beschreibung fertig'; endRun('done');
+        R.prompt.focus(); toast('Beschreibung steht im Prompt – prüfen und „Senden“ wählen');
+        return;
+      }
       const promptText = R.prompt.value;
-      let askLi = null, fitLi = null;
-      const res = await AI().pipeline.generate(promptText, {
-        signal, aspect: CG.state.format.w / CG.state.format.h, reference: S.image.base64,
-        onEvent: ev => {
-          if (ev.type === 'ask') {
-            askLi = logItem(ev.round ? `Runde ${ev.round + 1}/${ev.rounds}: ${model} vergleicht und ändert das Rezept …` : `${model} sieht das Bild und schreibt das Rezept …`, 'act');
-            fitLi = null; meta('');
-          }
-          if (ev.type === 'tokens') meta(`${ev.n} Tokens`);
-          if (ev.type === 'recipe') {
-            setLi(askLi, `${askLi.textContent.replace(' …', '')} · ${ev.layers}`, 'ok');
-            if (ev.notes) {
-              const li = logItem('', 'note');
-              li.innerHTML = `<details class="notes"><summary>${ev.round ? 'Eigener Vergleich' : 'Was das Modell sieht'}${ev.title ? ' · ' + esc(ev.title) : ''}</summary><div>${esc(ev.notes)}</div></details>`;
-            }
-            fitLi = logItem('Die App gleicht Farben und Aufbau an die Referenz an …', 'act'); meta('');
-          }
-          if (ev.type === 'fit' && fitLi) setLi(fitLi, `Die App gleicht Farben und Aufbau an die Referenz an … ${Math.round(100 * ev.done / ev.steps)} %`, 'act');
-          if (ev.type === 'fitted' && fitLi) setLi(fitLi, `Angeglichen · Übereinstimmung ${ev.from} % → ${ev.to} %${ev.kept ? '' : ' · nicht messbar besser, die vorige Fassung bleibt (beide stehen unten zur Auswahl)'}`, 'ok');
-          if (ev.type === 'pruned') logItem(`Ohne Wirkung auf die Ähnlichkeit, entfernt: ${ev.layers.join(', ')}`, 'note');
-          if (ev.type === 'look') logItem('Ergebnis dem Modell neben der Referenz gezeigt', 'ok');
-        },
-      });
+      if (S.edit) {
+        const gen = S.edit, request = R.wishes.value;
+        // der Prompt enthält die aktuelle Funktion; wurde er von Hand bearbeitet, gilt die bearbeitete Fassung
+        const res = await AI().pipeline.improve(gen, request, { signal, aspect, onEvent: log, promptText: S.promptDirty ? promptText : null });
+        if (AI().settings.api() === 'ollama') logItem(`${model} entladen`, 'ok');
+        const fn = await AI().pipeline.applyImprove(gen, res, request);
+        logItem(`„${fn.name}“ geändert · ${res.params.length} Regler`, 'ok');
+        R.runTitle.textContent = 'Fertig'; endRun('done');
+        S.edit = fn.gen; R.wishes.value = ''; S.promptDirty = false; updateMode();
+        refreshActive(fn);
+        showResult(fn, res, true); renderLibrary(); CG.panel.build(); CG.markDirty();
+        return;
+      }
+      const res = await AI().pipeline.generate(promptText, { signal, aspect, reference: S.image ? S.image.base64 : null, onEvent: log });
       if (AI().settings.api() === 'ollama') logItem(`${model} entladen`, 'ok');
-      const fn = await AI().pipeline.save({ name: res.title || 'KI-Generator', code: res.code, params: res.params, recipe: res.recipe, score: res.score,
-        prompt: promptText, thumb: res.thumb, aspect: CG.state.format.w / CG.state.format.h });
-      logItem(`Gespeichert als „${fn.name}“ · ${AI().recipe.describe(res.recipe)}`, 'ok');
+      const fn = await AI().pipeline.save({ name: res.title || 'KI-Funktion', code: res.code, params: res.params, prompt: res.prompt,
+        repairs: res.repairs, thumb: res.thumb, aspect, source: res.source });
+      logItem(`Gespeichert als „${fn.name}“ · ${res.params.length} Regler`, 'ok');
       R.runTitle.textContent = 'Fertig';
       endRun('done');
-      showResult(fn, res, promptText);
+      showResult(fn, res);
       renderLibrary();
       CG.panel.build();
       if (!R.review.checked) setTimeout(() => open(fn.id), 900);            // ohne Eingriff direkt in der Sandbox öffnen
@@ -326,7 +434,6 @@ CG.aiPage = (() => {
       R.runTitle.textContent = aborted ? 'Abgebrochen' : 'Fehler';
       if (!aborted) {
         logItem(e.message || String(e), 'bad');
-        if (e.errors && e.errors.length) { const l2 = logItem('', 'errs'); l2.innerHTML = `<ul>${e.errors.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`; }
       } else logItem('Vom Nutzer abgebrochen – Modell wird entladen', 'note');
       endRun('failed');
       R.result.hidden = false;
@@ -335,24 +442,31 @@ CG.aiPage = (() => {
     }
   }
 
-  // Ergebnis: gespeichert wird die Fassung mit der besten gemessenen Übereinstimmung; die anderen Runden stehen zur Auswahl
-  function showResult(fn, res, promptText) {
+  function showResult(fn, res, improved) {
     R.result.hidden = false;
-    const others = (res.candidates || []).filter(c => c.round !== res.round);
+    const canUndo = improved && (fn.gen.history || []).length;
     R.result.innerHTML = `${res.thumb ? `<img src="${res.thumb}" alt="">` : ''}
-      <div class="res-meta"><b>${esc(fn.name)}</b><small>${esc(AI().recipe.describe(res.recipe))} · Übereinstimmung ${res.similarity} %</small></div>
-      <button class="btn primary" type="button" data-a="open">In Sandbox öffnen</button>
-      ${others.map((c, i) => `<button class="btn res-alt" type="button" data-alt="${i}" title="Diese Fassung zusätzlich speichern">
-        <img src="${c.thumb}" alt=""><span>Runde ${c.round + 1} · ${esc(AI().recipe.describe(c.recipe))} · ${c.similarity} %</span></button>`).join('')}`;
+      <div class="res-meta"><b>${esc(fn.name)}</b><small>${res.params.length} Regler · ${res.repairs ? res.repairs + ' Reparatur(en)' : 'ohne Reparatur'}</small>
+      ${res.warnings.length ? `<small class="warn">${res.warnings.map(esc).join(' · ')}</small>` : ''}</div>
+      ${canUndo ? `<button class="btn" type="button" data-a="undo">${CG.icon('undo')}<span>Rückgängig</span></button>` : ''}
+      <button class="btn primary" type="button" data-a="open">In Sandbox öffnen</button>`;
     R.result.querySelector('[data-a=open]').onclick = () => open(fn.id);
-    R.result.querySelectorAll('[data-alt]').forEach(btn => { btn.onclick = async () => {
-      const c = others[+btn.dataset.alt]; btn.disabled = true;
-      try {
-        const f2 = await AI().pipeline.save({ name: `${c.title || fn.name} · Runde ${c.round + 1}`, code: c.code, params: c.params, recipe: c.recipe, score: c.score,
-          prompt: promptText, thumb: c.thumb, aspect: CG.state.format.w / CG.state.format.h });
-        renderLibrary(); CG.panel.build(); open(f2.id);
-      } catch (e) { toast(e.message); btn.disabled = false; }
-    }; });
+    const u = R.result.querySelector('[data-a=undo]');
+    if (u) u.onclick = () => undo(fn.gen);
+  }
+
+  // läuft der geänderte Generator gerade in der Sandbox: neu übersetzen und Regler neu aufbauen
+  function refreshActive(fn) { if (CG.state.fn === fn.id && CG.loadState) CG.loadState(fn.id, {}); }
+
+  // letzte Änderung per Prompt zurücknehmen
+  async function undo(gen) {
+    try {
+      const fn = await AI().pipeline.undoImprove(gen);
+      if (!fn) return toast('Keine frühere Fassung');
+      if (S.edit && S.edit.id === gen.id) { S.edit = fn.gen; S.promptDirty = false; updateMode(); }
+      refreshActive(fn);
+      R.result.hidden = true; renderLibrary(); CG.panel.build(); CG.markDirty(); toast('Vorige Fassung wiederhergestellt');
+    } catch (e) { toast(e.message); }
   }
 
   function open(fnId) {
@@ -371,9 +485,11 @@ CG.aiPage = (() => {
       const card = el(`<div class="gen">
           <button class="gen-open" type="button" title="In Sandbox öffnen">
             ${g.thumb ? `<img src="${esc(g.thumb)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}
-            <span class="meta"><b>${esc(g.name)}</b><small>${new Date(g.created).toLocaleDateString('de-DE')} · ${esc((g.models && (g.models.model || g.models.code)) || '')}${g.recipe ? ' · ' + esc(AI().recipe.describe(g.recipe)) : g.kind === 'shader' ? ' · Shader' : ''}</small></span>
+            <span class="meta"><b>${esc(g.name)}</b><small>${new Date(g.created).toLocaleDateString('de-DE')} · ${esc((g.models && (g.models.model || g.models.code)) || '')}${g.kind === 'shader' ? ' · Shader' : ''}</small></span>
           </button>
           <div class="gen-acts">
+            ${g.kind === 'shader' ? `<button class="act" type="button" data-a="edit" title="Per Prompt verbessern">${CG.icon('spark')}</button>` : ''}
+            ${(g.history || []).length ? `<button class="act" type="button" data-a="undo" title="Letzte Änderung zurücknehmen">${CG.icon('undo')}</button>` : ''}
             <button class="act" type="button" data-a="tpl" title="Prompt übernehmen">${CG.icon('reset')}</button>
             <button class="act" type="button" data-a="code" title="Code herunterladen">${CG.icon('download')}</button>
             <button class="act" type="button" data-a="file" title="Generator sichern (.json)">${CG.icon('copy')}</button>
@@ -381,19 +497,22 @@ CG.aiPage = (() => {
           </div></div>`);
       card.querySelector('.gen-open').onclick = () => open(fn.id);
       card.querySelector('[data-a=code]').onclick = () => fn.downloadCode();
+      const eb = card.querySelector('[data-a=edit]'); if (eb) eb.onclick = () => { H.tick(); setEdit(g); };
+      const ub = card.querySelector('[data-a=undo]'); if (ub) ub.onclick = () => undo(g);
       card.querySelector('[data-a=file]').onclick = () => CG.util.download(new Blob([AI().store.toFile(g)], { type: 'application/json' }), `${g.name.replace(/[^\wäöüÄÖÜß-]+/g, '_')}.cg-generator.json`);
       card.querySelector('[data-a=tpl]').onclick = () => {
+        if (S.edit) setEdit(null);
         S.prompt = g.prompt || ''; R.prompt.value = S.prompt; S.promptDirty = true; promptMeta();
         H.tick(); toast('Prompt übernommen');
       };
       card.querySelector('[data-a=del]').onclick = async () => {
         if (!confirm(`„${g.name}“ endgültig löschen?`)) return;
-        try { await AI().store.remove(g.id); AI().registry.unregister(g.id); renderLibrary(); toast('Gelöscht'); }
+        try { await AI().store.remove(g.id); AI().registry.unregister(g.id); if (S.edit && S.edit.id === g.id) setEdit(null); renderLibrary(); toast('Gelöscht'); }
         catch (e) { toast(e.message); }
       };
       R.grid.appendChild(card);
     }
   }
 
-  return { init, show, refreshHealth };
+  return { init, show, refreshHealth, edit };
 })();

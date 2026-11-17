@@ -20,14 +20,15 @@ CG.ai.settings = (() => {
   const DEFAULTS = {
     server: 'ollama',
     url: 'http://localhost:11434',
-    model: 'gemma4:12b-mlx',                 // muss Bilder lesen können
-    temperature: 0.4,
-    numCtx: 8192,
+    model: 'gemma4:12b-mlx',                 // baut die Funktion (jedes Modell; mit Bildverständnis sieht es die Referenz selbst)
+    describeModel: '',                       // optional: beschreibt die Referenz, wenn das Modell oben keine Bilder lesen kann
+    temperature: 0.25,                       // niedrig = weniger Flüchtigkeitsfehler im Code
+    numCtx: 12288,
     maxTokens: 8192,                         // Ollamas MLX-Motor kappt sonst bei ~2048 Token
     think: false,
     timeouts: { generationSec: 900, renderMs: 4000 },
-    refineRounds: 1,                         // Runden, in denen das Modell das Rezept nach eigenem Vergleich ändert
-    fitSteps: 900,                           // Schritte beim automatischen Angleichen an die Referenz
+    refineRounds: 1,                         // Vergleichsrunden mit der Referenz (0 = aus)
+    repairAttempts: 3,
     maxImageSide: 1024,
   };
 

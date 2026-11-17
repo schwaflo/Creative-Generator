@@ -332,99 +332,141 @@ function draw(ctx) { throw new Error(JSON.stringify([v, W, H, S])); }`);
   });
 });
 
-/* ---------- Prompt (Art Director) ---------- */
+/* ---------- Auftrag (Interface für das Modell) ---------- */
 describe('Prompt', () => {
-  it('Auftrag: Rezept statt Code – Wunsch, Format, alle Ebenen-Typen', () => {
-    const t = AI.prompt.text({ wishes: 'die Blops bewegen sich', format: { w: 2480, h: 3508 } });
-    assert.match(t, /die Blops bewegen sich/); assert.match(t, /portrait/); assert.match(t, /You do not write code/);
-    AI.recipe.TYPE_IDS.forEach(id => assert.match(t, new RegExp('- ' + id + ':'), 'Typ fehlt im Auftrag: ' + id));
-    assert.ok(!/mainImage|GLSL|shader/i.test(t), 'kein Code im Auftrag');
-    assert.match(AI.prompt.VERSION, /^rezept-v\d+$/);
+  const P = AI.prompt;
+  it('Auftrag erklärt das Interface: Regler, Dropdown (Index), Schalter, Seed, Gruppen, Shader-Einstieg', () => {
+    const t = P.text({ wishes: 'die Blops bewegen sich', format: { w: 2480, h: 3508 }, source: 'image' });
+    assert.match(t, /die Blops bewegen sich/); assert.match(t, /portrait/);
+    assert.match(t, /"type": "range"/); assert.match(t, /"type": "color"/); assert.match(t, /"type": "toggle"/); assert.match(t, /"type": "seed"/);
+    assert.match(t, /"type": "select", "options": \["Wellen", "Kreise", "Linien"\]/);
+    assert.match(t, /index of the chosen option/); assert.match(t, /if \(u_mode < 0\.5\)/);
+    assert.match(t, /"group"/); assert.match(t, /u_<id>/);
+    assert.match(t, /void mainImage\(out vec4 fragColor, in vec2 fragCoord\)/); assert.match(t, /iTime/); assert.match(t, /iLoop/);
+    assert.match(P.VERSION, /^funktion-v\d+$/);
   });
-  it('Nachrichten: Bild am Auftrag, nächste Runde mit Vergleichsbild und dem angeglichenen Rezept', () => {
-    const base = AI.prompt.messages('T', 'IMG');
-    assert.equal(base.length, 2); assert.deepEqual(base[1].images, ['IMG']);
-    const look = AI.prompt.feedback(base, { title: 'X', layers: [] }, { compareBase64: 'CMP' });
+  it('Drei Wege: Bild, Beschreibung (Platzhalter), nur Text', () => {
+    assert.match(P.text({ wishes: 'w', source: 'image' }), /attached is a reference image/);
+    const d = P.text({ wishes: 'w', source: 'description' });
+    assert.ok(d.includes(P.SLOT)); assert.match(d, /You cannot see the image/);
+    const t = P.text({ wishes: 'Tintenwolken in Blau', source: 'text' });
+    assert.match(t, /^Task: Tintenwolken in Blau/); assert.ok(!t.includes(P.SLOT)); assert.ok(!/reference image/.test(t));
+    assert.deepEqual(P.messages('T', null)[1].images, undefined);
+    assert.deepEqual(P.messages('T', 'IMG')[1].images, ['IMG']);
+    assert.deepEqual(P.describeMessages('IMG')[0].images, ['IMG']);
+  });
+  it('Nächste Runde: Fehlerliste, eigener Bildvergleich oder Text-Kritik des zweiten Modells', () => {
+    const base = P.messages('T', 'IMG'), a = { title: 'X', notes: 'n', params: [], shader: 's' };
+    const look = P.feedback(base, a, { compareBase64: 'CMP' });
     assert.equal(look.length, 4); assert.deepEqual(look[3].images, ['CMP']); assert.match(look[3].content, /LEFT = the reference/);
-    assert.match(look[2].content, /"title": "X"/);
+    const err = P.feedback(base, a, { errors: ['Fehler A'], compareBase64: 'CMP' });
+    assert.equal(err[3].images, undefined); assert.match(err[3].content, /- Fehler A/);
+    const cr = P.feedback(base, a, { critique: 'Stränge zu dick', compareBase64: 'CMP' });
+    assert.equal(cr[3].images, undefined); assert.match(cr[3].content, /Stränge zu dick/);
+  });
+  it('Verbessern: aktuelle Funktion (Regler + Code) und Änderungswunsch im Auftrag, Bild nur für Bild-Modelle', () => {
+    const gen = { name: 'Wolken', params: [{ id: 'speed', label: 'Tempo', type: 'range', min: 0, max: 2, step: 0.01, default: 1 }], code: 'void mainImage(out vec4 f, in vec2 c){ f = vec4(u_speed); }' };
+    const t = P.improveText({ gen, request: 'füge ein Dropdown für drei Farbstimmungen hinzu' });
+    assert.match(t, /"id": "speed"/); assert.match(t, /void mainImage/); assert.match(t, /Dropdown für drei Farbstimmungen/);
+    assert.match(t, /keep the ids of existing controls/); assert.match(t, /index of the chosen option/);
+    assert.deepEqual(P.improveMessages(t, 'SHOT')[1].images, ['SHOT']);
+    assert.equal(P.improveMessages(t, null)[1].images, undefined);
+  });
+  it('Auftrag nennt Sprachregeln und Hilfsfunktionen und enthält ein kurzes Beispiel', () => {
+    const t = P.text({ wishes: 'x', source: 'text' });
+    assert.match(t, /2\.0, not 2/); assert.match(t, /not frac, lerp/); assert.match(t, /hash\(float \| vec2 \| vec3\)/); assert.match(t, /fbm\(vec2 \| vec3\)/);
+    assert.match(t, /"title":"Farbwolken"/);
+  });
+  it('Antwort-Schema verlangt Titel, Notizen, Regler, Shader', () => {
+    assert.deepEqual(AI.schema.SHADER.required, ['title', 'notes', 'params', 'shader']);
   });
 });
 
-/* ---------- Rezept ---------- */
-describe('Rezept', () => {
-  const RC = AI.recipe;
-  const sample = { title: 'Netz', notes: 'n', background: { top: '#e8e0e8', bottom: '#405068', glow: '#fff0e8', glowX: 0.1, glowY: 0.2, glowSize: 0.6, glowStrength: 0.8 },
-    camera: { tilt: 0.6, roll: -20, zoom: 0.5, focus: 0.4, blur: 0.6, haze: 0.5 }, light: { angle: 140 },
-    layers: [{ type: 'mesh', colorA: '#e8d8e0', colorB: '#8088a8', size: 0.45, fill: 0.3, chaos: 0.7, detail: 0.6, relief: 0.8, gloss: 0.3 }] };
-  it('Antwort-Schema: Typen als Auswahl, Felder in fester Reihenfolge', () => {
-    assert.deepEqual(RC.SCHEMA.required, ['title', 'notes', 'background', 'camera', 'layers']);
-    assert.deepEqual(RC.SCHEMA.properties.layers.items.properties.type.enum, RC.TYPE_IDS);
-    assert.equal(RC.TYPE_IDS.length, 12);
+/* ---------- Ablauf: welcher Weg gilt ---------- */
+describe('Ablauf', () => {
+  const PL = AI.pipeline, set = o => Object.assign(AI.config, o), saved = { model: AI.config.model, describeModel: AI.config.describeModel };
+  it('Bild-Modell sieht selbst; Text-Modell nutzt Beschreibung oder nur Text', () => {
+    PL.setModels([{ name: 'seher', capabilities: ['completion', 'vision'] }, { name: 'coder', capabilities: ['completion'] }]);
+    set({ model: 'seher', describeModel: '' });
+    assert.equal(PL.plan(true).source, 'image'); assert.equal(PL.plan(false).source, 'text');
+    set({ model: 'coder', describeModel: 'seher' });
+    const d = PL.plan(true); assert.equal(d.source, 'description'); assert.equal(d.describer, 'seher'); assert.equal(d.vision, false);
+    set({ model: 'coder', describeModel: '' });
+    const t = PL.plan(true); assert.equal(t.source, 'text'); assert.equal(t.imageUnused, true);
   });
-  it('Unvollständige oder kaputte Rezepte werden nie zum Fehler', () => {
-    const a = RC.normalize(null);
-    assert.equal(a.layers.length, 1); assert.equal(a.layers[0].type, 'fog');
-    const b = RC.normalize({ background: { top: 'rot' }, camera: { tilt: 7, roll: 'x' }, layers: [
-      { type: 'organic mesh', colorA: 'abc', size: '0.4', fill: 5, blend: 'glow', motion: 'tanzen', speed: 9 }, { type: 'gibtsnicht' }, 'quatsch',
-      ...Array.from({ length: 9 }, () => ({ type: 'dots', colorA: '#ffffff', colorB: '#000000' }))] });
-    assert.equal(b.background.top, '#20232b'); assert.equal(b.camera.tilt, 1); assert.equal(b.camera.roll, 0);
-    assert.equal(b.layers.length, RC.MAX_LAYERS);
-    const m = b.layers[0];
-    assert.deepEqual([m.type, m.colorA, m.colorB, m.size, m.fill, m.blend, m.motion, m.speed], ['mesh', '#aabbcc', '#aabbcc', 0.4, 1, 'normal', 'flow', 3]);
-    assert.equal(RC.normalize({ layers: [{ type: 'mesh', blend: 'screen' }] }).layers[0].blend, 'normal', 'feste Körper decken normal');
-    assert.equal(RC.normalize({ layers: [{ type: 'fog', blend: 'screen' }] }).layers[0].blend, 'screen');
-  });
-  it('Regler aus dem Rezept: gültiges Schema, Gruppen pro Ebene, Werte zurück ins Rezept', () => {
-    const rc = RC.normalize(sample), v = AI.schema.validateParams(RC.toParams(rc));
-    assert.ok(v.ok, v.errors.join(' | '));
-    const ids = v.params.map(p => p.id);
-    ['bg1', 'tilt', 'light', 'seed', 'e1_a', 'e1_size', 'e1_motion'].forEach(id => assert.ok(ids.includes(id), id + ' fehlt'));
-    assert.equal(v.params.find(p => p.id === 'e1_fill').group, '1 · Netz');
-    v.params.find(p => p.id === 'e1_fill').default = 0.55; v.params.find(p => p.id === 'bg1').default = '#112233';
-    const back = RC.withParams(rc, v.params);
-    assert.equal(back.layers[0].fill, 0.55); assert.equal(back.background.top, '#112233'); assert.equal(rc.layers[0].fill, 0.3, 'Original bleibt unverändert');
-    assert.equal(RC.describe(RC.normalize({ layers: [{ type: 'fog' }, { type: 'mesh' }] })), 'Nebel + Netz');
-  });
-  it('Jeder Ebenen-Typ kompiliert und zeichnet etwas Sichtbares', () => {
-    const rd = new RC.Renderer(), bad = [];
-    for (const t of RC.TYPE_IDS) {
-      const rc = RC.normalize({ background: { top: '#202838', bottom: '#101018' }, layers: [{ type: t, colorA: '#f0d0a0', colorB: '#603020' }] });
-      rd.compile(AI.schema.validateParams(RC.toParams(rc)).params, RC.toCode(rc));
-      rd.render(96, 96, 0.25);
-      const f = RC.features(rd.pixels(96, 96), 96, 96, true);
-      let c = 0; for (let i = 0; i < 64; i++) c += f[i * 8 + 3];
-      if (c / 64 < 0.01) bad.push(t);
-    }
-    rd.destroy();
-    assert.deepEqual(bad, []);
-  });
-  it('Der erzeugte Shader besteht auch die allgemeine Shader-Prüfung (läuft im Renderer der App)', async () => {
-    const rc = RC.normalize({ ...sample, layers: [...sample.layers, { type: 'bokeh', colorA: '#ffffff', colorB: '#ffe0c0' }] });
-    const box = new AI.Sandbox({ timeout: 6000 });
-    const v = await AI.validate.runShader(RC.toParams(rc), RC.toCode(rc), { sandbox: box, aspect: 0.707 });
-    box.destroy();
-    assert.ok(v.ok, v.errors.join(' | '));
-  });
-  it('Angleichen: findet verstellte Farben und Werte wieder (Abstand zur Referenz sinkt deutlich)', async () => {
-    const target = RC.normalize(sample), [w, h] = RC.fitSize(0.707);
-    const rd = new RC.Renderer(), P = AI.schema.validateParams(RC.toParams(target)).params, code = RC.toCode(target);
-    rd.compile(P, code); rd.render(w, h, 0.25);
-    const ref = { f: RC.features(rd.pixels(w, h), w, h, true), w, h };
-    const off = RC.normalize({ ...sample, background: { ...sample.background, top: '#a09098', bottom: '#203048', glowX: 0.35 },
-      camera: { ...sample.camera, tilt: 0.45 }, layers: [{ ...sample.layers[0], colorA: '#c0b0b8', colorB: '#606888', size: 0.55, fill: 0.45 }] });
-    const P2 = AI.schema.validateParams(RC.toParams(off)).params;
-    rd.compile(P2, RC.toCode(off));
-    const r = await RC.fit(rd, P2, ref, { steps: 500 });
-    rd.destroy();
-    assert.ok(r.best < r.start * 0.6, `Abstand ${r.start.toFixed(4)} → ${r.best.toFixed(4)}`);
-    assert.ok(r.params.every(p => !('c0' in p)), 'keine Hilfswerte in den Reglern');
-    assert.match(r.params.find(p => p.id === 'bg1').default, /^#[0-9a-f]{6}$/);
+  it('Unbekannte Fähigkeiten (OpenAI-kompatibel): Bild direkt, außer ein Beschreibungs-Modell ist gewählt', () => {
+    PL.setModels([{ name: 'x' }, { name: 'y' }]);
+    set({ model: 'x', describeModel: '' }); assert.equal(PL.plan(true).source, 'image');
+    set({ model: 'x', describeModel: 'y' }); assert.equal(PL.plan(true).source, 'description');
+    set(saved); PL.setModels([]);
   });
 });
 
 /* ---------- Shader ---------- */
 describe('Shader', () => {
   const box = new AI.Sandbox({ timeout: 4000 });
+  // so, wie es der Auftrag beschreibt: Regler, Dropdown (Index), Schalter, Seed, Farbe
+  const ex = { params: [
+      { id: 'mode', label: 'Muster', type: 'select', options: ['Wellen', 'Kreise', 'Linien'], default: 'Wellen', group: 'Form' },
+      { id: 'speed', label: 'Tempo', type: 'range', min: 0, max: 2, step: 0.01, default: 1, group: 'Bewegung' },
+      { id: 'glow', label: 'Leuchten', type: 'toggle', default: true },
+      { id: 'ink', label: 'Tinte', type: 'color', default: '#2ec4b6' },
+      { id: 'seed', label: 'Seed', type: 'seed', default: 7 }],
+    shader: ['void mainImage(out vec4 fragColor, in vec2 fragCoord) {',
+      '  vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;',
+      '  float t = iTime * u_speed, v;',
+      '  if (u_mode < 0.5) v = sin(uv.x * 20.0 + sin(uv.y * 6.0 + t) * 2.0 + u_seed);',
+      '  else if (u_mode < 1.5) v = sin(length(uv) * 40.0 - t * 3.0);',
+      '  else v = sin((uv.x + uv.y) * 30.0 + t);',
+      '  vec3 col = mix(vec3(0.05), u_ink, smoothstep(-0.2, 0.2, v));',
+      '  col += u_glow * 0.25 * u_ink * (1.0 - length(uv));',
+      '  fragColor = vec4(col, 1.0);', '}'].join('\n') };
+  it('Funktion nach Auftrag (Dropdown, Regler, Schalter, Seed, Farbe) besteht die Prüfung', async () => {
+    const v = await AI.validate.runShader(ex.params, ex.shader, { sandbox: box, aspect: 16 / 9 });
+    assert.ok(v.ok, v.errors.join(' | ')); assert.equal(v.params.length, 5);
+    assert.ok(!/Ohne sichtbare Wirkung/.test(v.warnings.join(' ')), v.warnings.join(' '));
+  });
+  it('Beispiel aus dem Auftrag besteht die Prüfung', async () => {
+    const e = JSON.parse(AI.prompt.EXAMPLE), v = await AI.validate.runShader(e.params, e.shader, { sandbox: box, aspect: 16 / 9 });
+    assert.ok(v.ok, v.errors.join(' | ')); assert.ok(!/Ohne sichtbare Wirkung/.test(v.warnings.join(' ')), v.warnings.join(' '));
+  });
+  it('Hilfsfunktionen: fehlende noise/fbm/hash werden ergänzt, eigene Fassungen bleiben, fehlende Überladung kommt dazu', async () => {
+    const H = AI.shader.helpers;
+    assert.equal(H('void mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }'), '');
+    assert.match(H('void mainImage(out vec4 f, in vec2 c){ f = vec4(fbm(c)); }'), /float fbm\(vec2 p\)/);
+    const own = 'float noise(vec2 p){ return fract(sin(dot(p, vec2(12.9, 78.2))) * 43758.5); }\nvoid mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; fragColor = vec4(vec3(noise(floor(uv * 9.0)) * noise(vec3(uv * 5.0, iTime))), 1.0); }';
+    assert.ok(!/float noise\(vec2 p\)/.test(H(own)), 'eigene noise(vec2) bleibt'); assert.match(H(own), /float noise\(vec3 p\)/);
+    const v = await AI.validate.runShader([], own, { sandbox: box });
+    assert.ok(v.ok, v.errors.join(' | '));
+    const v2 = await AI.validate.runShader([], 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.y; uv *= rot(0.4); fragColor = vec4(palette(fbm(vec3(uv * 4.0, iTime)) + hash(floor(uv * 3.0)), vec3(0.5), vec3(0.5), vec3(1.0), vec3(0.0, 0.33, 0.67)), 1.0); }', { sandbox: box });
+    assert.ok(v2.ok, v2.errors.join(' | '));
+  });
+  it('Im Shader benutzte, aber nicht angelegte Regler werden ergänzt (Schieberegler oder Farbe)', async () => {
+    const code = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; fragColor = vec4(mix(vec3(0.0), u_ink_color, fract(uv.x * 6.0 * u_scale + iTime * u_speed)), 1.0); }';
+    const r = AI.shader.tidy([{ id: 'speed', label: 'Tempo', type: 'range', min: 0, max: 2, step: 0.01, default: 1 }], code);
+    assert.deepEqual(r.params.map(p => p.id + ':' + p.type), ['speed:range', 'ink_color:color', 'scale:range']);
+    const v = await AI.validate.runShader(r.params, r.code, { sandbox: box });
+    assert.ok(v.ok, v.errors.join(' | '));
+  });
+  it('Selbstkorrektur: main() mit gl_FragColor, u_time/u_resolution, #extension, float x = 2', async () => {
+    const raw = '#extension GL_OES_standard_derivatives : enable\nprecision highp float;\nout vec4 outColor;\nvoid main() {\n  vec2 uv = gl_FragCoord.xy / u_resolution;\n  float k = 3;\n  gl_FragColor = vec4(uv, 0.5 + 0.5 * sin(u_time * k), 1.0);\n}';
+    const r = AI.shader.tidy([], raw);
+    assert.match(r.code, /void mainImage\(out vec4 fragColor, in vec2 fragCoord\)/); assert.ok(!/#extension|precision|gl_Frag/.test(r.code)); assert.match(r.code, /float k = 3\.0;/);
+    const v = await AI.validate.runShader([], r.code, { sandbox: box });
+    assert.ok(v.ok, v.errors.join(' | '));
+    assert.ok(!/#define time/.test(AI.shader.tidy([], 'void mainImage(out vec4 f, in vec2 c){ float time = iTime; f = vec4(time); }').code), 'eigene Variable time bleibt');
+  });
+  it('Dropdown kommt als Index im Shader an: jede Option ergibt ein anderes Bild', async () => {
+    const P = AI.schema.validateParams(ex.params).params, frag = AI.shader.source(P, ex.shader), grids = [];
+    for (const opt of ['Wellen', 'Kreise', 'Linien']) {
+      const r = await box.shader({ frag, uniforms: AI.shader.uniforms(P, { mode: opt }), t: 0.3, w: 96, h: 54, stats: true });
+      r.bitmap.close(); grids.push(r.stats.grid);
+    }
+    const diff = (a, b) => a.reduce((s2, x, i) => s2 + Math.abs(x - b[i]), 0) / a.length;
+    assert.ok(diff(grids[0], grids[1]) > 0.02 && diff(grids[1], grids[2]) > 0.02 && diff(grids[0], grids[2]) > 0.02);
+    const ctl = AI.schema.toGroups('f', P, true).flatMap(g => g.params).find(c => c.genId === 'mode');
+    assert.equal(ctl.u, 'u_mode'); assert.equal(ctl.map('Linien'), 2); assert.equal(ctl.options.length, 3);
+  });
   it('GLSL-Fehler mit Zeile des Modell-Shaders', async () => {
     const code = 'vec3 image(vec2 uv, vec2 p, float t) {\n  float a = 1.0;\n  return vec3(a, b, 0.0);\n}';
     const v = await AI.validate.runShader([{ id: 'seed', label: 'Seed', type: 'seed', default: 1 }], code, { sandbox: box });
@@ -513,6 +555,7 @@ describe('Shader', () => {
     assert.equal(g.find(p => p.genId === 'mode').u, 'u_mode'); assert.equal(g.find(p => p.genId === 'mode').map('B'), 1);
   });
   it('Shader aus Zaun/Freitext wird herausgelöst', () => {
+    assert.equal(AI.parse.extractShader('void mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }"}'), 'void mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }\n');
     assert.equal(AI.parse.extractShader('vec3 image(vec2 uv, vec2 p, float t) {\\n  return vec3(1.0);\\n}'), 'vec3 image(vec2 uv, vec2 p, float t) {\n  return vec3(1.0);\n}\n');
     assert.match(AI.parse.extractShader('```glsl\n#version 300 es\nvec3 image(vec2 uv, vec2 p, float t){ return vec3(1.0); }\n```'), /^vec3 image/);
   });

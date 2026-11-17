@@ -59,6 +59,7 @@ CG.ai.parse = (() => {
     const m = s.match(/```[ \t]*(?:glsl|frag|c|cpp|hlsl)?[^\n]*\n([\s\S]*?)(?:```|$(?![\s\S]))/);
     if (m && /image\s*\(/.test(m[1])) s = m[1];
     s = s.replace(/^\s*#\s*version[^\n]*\n/m, '').replace(/^\s*precision\s+\w+\s+float\s*;\s*$/m, '');
+    s = s.replace(/\}\s*["']\s*\}?\s*$/, '}');                      // Rest vom JSON am Ende des Codes:  }"}
     return s.trim() ? s.trim() + '\n' : null;
   }
 

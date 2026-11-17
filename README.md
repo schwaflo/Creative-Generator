@@ -58,31 +58,41 @@ Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 
 ### Ablauf
 
-Das Modell ist **Art Director, nicht Programmierer**: Es schreibt keinen Code, sondern beschreibt das Bild als Rezept.
-Das Rendern übernimmt die App mit eigenen, geprüften Shader-Bausteinen (`js/ai/recipe.js`) – es gibt keine
-Kompilierfehler und keine Reparaturrunden.
+Der Generator ist **nur das Interface**: Die KI baut die Funktion – einen animierten Shader samt eigener Regler.
+Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v2`) erklärt dem Modell genau, wie die App aus seiner Parameterliste
+Regler, Dropdowns, Schalter, Farben und den Seed baut und wie sie im Shader ankommen. Alles Gestalterische entscheidet das Modell.
 
-1. **Referenzbild** ablegen oder wählen (wird auf max. `maxImageSide` px verkleinert), optional Wünsche.
-2. **Prompt** (`js/ai/prompt.js`, aktuell `rezept-v1`) – angezeigt und editierbar („Prompt erst prüfen“).
-3. **Rezept**: Das Modell (mit Bildverständnis, z. B. `gemma4:12b-mlx`) beschreibt das Bild als JSON – Hintergrund,
-   Kamera (Neigung, Fokus, Tiefenunschärfe), Licht und 1–5 **Ebenen** aus zwölf Typen: Netz, Zellen, Blasen, Punkte,
-   Fasern, Höhenlinien, Streifen, Ringe, Nebel, Fluid, Kristall, Lichter. Jede Ebene hat Farben und Werte 0..1
-   (Größe, Fülle, Unregelmäßigkeit, Detail, Relief, Glanz, Glas, Weichheit, Deckkraft) sowie eine Bewegung.
-   Unvollständige oder unlesbare Angaben bekommen Vorgaben – ein Rezept führt nie zu einem Fehler.
-4. **Angleichen** (ohne Modell, auf der Grafikkarte, etwa 1 s): Die App rechnet die Farben aus, die der Referenz am
-   nächsten kommen, sucht passende Werte für Bildaufbau und Größen (`fitSteps` Schritte) und entfernt Ebenen, ohne die
-   das Bild mindestens so gut passt. Verglichen wird Statistik auf einem 8×8-Raster (Farbe, Kontrast, Kanten,
-   Formgrößen), kein Pixelvergleich. Die angezeigte „Übereinstimmung“ ist dieses Maß in Prozent.
-5. **Eigener Vergleich** (`refineRounds`): Das Modell sieht das angeglichene Ergebnis neben der Referenz und ändert das
-   Rezept. Gespeichert wird die Fassung mit der besseren Übereinstimmung; die anderen Runden stehen zur Auswahl.
-6. Speichern im Browser, Regler automatisch (Kamera, Licht, je Ebene eine Gruppe, Farben als Palette).
+**Drei Wege zur Aufgabe** – es funktioniert mit jedem Modell:
 
-Ein Durchlauf dauert mit gemma4 etwa 40–60 s. Der Generator läuft danach in derselben WebGL-Pipeline wie Feuer und
-Grounddata (Finish, Bild-Ebene, Export, Video, nahtloser Loop).
+| Weg | Wann | Was passiert |
+|---|---|---|
+| Bild | Modell kann Bilder lesen (z. B. `gemma4`) | Das Modell sieht die Referenz selbst |
+| Beschreibung | Modell kann keine Bilder lesen, bei „Bild lesen“ ist ein zweites Modell gewählt | Das zweite Modell beschreibt die Referenz als Text; mit „Prompt erst prüfen“ steht die Beschreibung vorher im Prompt |
+| Nur Text | kein Bild | Die Funktion entsteht nur aus dem geschriebenen Auftrag |
 
-**Grenzen**: Es geht, was sich aus den Ebenen-Typen kombinieren lässt. Welche Ebenen das Modell wählt, schwankt von
-Lauf zu Lauf; die Messung erkennt Farben und Aufbau gut, aber nicht, ob eine helle Fläche Loch oder Körper ist.
-Neue Motive brauchen ggf. einen neuen Ebenen-Typ in `TYPES` (ein GLSL-Baustein und eine Zeile im Auftrag).
+1. **Auftrag**: optional ein Referenzbild, dazu Wünsche bzw. die Beschreibung, was entstehen soll. Der vollständige Prompt ist editierbar.
+2. **Funktion**: Das Modell antwortet mit einem JSON `{title, notes, params, shader}` (Shadertoy-Stil: `mainImage`, `iResolution`, `iTime`, `iLoop`).
+3. **Prüfung** in der Sandbox (Worker mit WebGL2). Zurück ans Modell gehen nur echte Fehler – kompiliert nicht
+   (mit Codezeile), Bild leer, viel zu langsam – bis zu `repairAttempts` Mal; hängt das Modell am selben Fehler, bricht die App früher ab.
+   Im Protokoll steht dafür eine einzige Zeile („Modell bessert nach (2/3)“), die Fehlertexte sind aufklappbar.
+
+**Damit möglichst wenige Fehler entstehen:**
+- Der Auftrag nennt die typischen GLSL-Stolperfallen und enthält ein kurzes, korrektes Beispiel (nur für Format und Sprache).
+- Die App stellt übliche Hilfsfunktionen bereit, die Modelle oft aufrufen, ohne sie passend zu definieren: `hash`, `noise`, `fbm`
+  (jeweils für mehrere Argumenttypen), `rot`, `smin`, `palette`. Eigene Fassungen des Modells haben Vorrang.
+- Vieles korrigiert die App selbst, ohne nachzufragen: `main()`/`gl_FragColor` → `mainImage`, `u_time`/`u_resolution`/`time`,
+  `frac`/`lerp`/`saturate`/`float3`, `float x = 2`, `#version`/`#extension`/`precision`, selbst deklarierte Uniforms, globale
+  Variablen mit Uniforms, Umlaute in ids, fehlende Reglergrenzen – und Regler, die im Shader benutzt, aber nicht angelegt wurden.
+4. **Vergleich** (`refineRounds`, nur mit Referenz): Ein Bild-Modell sieht sein Ergebnis neben der Referenz; bei einem Text-Modell
+   vergleicht das zweite Modell und schreibt die Unterschiede als Text.
+5. Speichern im Browser; Regler entstehen automatisch.
+
+**Verbessern**: Jeder gespeicherte Generator lässt sich nachträglich per Prompt ändern – über das Funken-Symbol in der Sandbox
+(Preset-Zeile) oder auf der Karte in der Bibliothek. Das Modell bekommt die aktuelle Funktion (Regler + Code), den Änderungswunsch
+und, wenn es Bilder lesen kann, ein Bild des aktuellen Ergebnisses. Die vorige Fassung bleibt für „Rückgängig“ erhalten (bis zu zehn).
+
+Es ist immer nur ein Modell geladen; beim Weg „Beschreibung“ wechselt die App zwischen den beiden.
+Die Qualität hängt vollständig vom Modell ab.
 
 ### Konfiguration – `config.json` + Seite „KI“
 
@@ -92,35 +102,47 @@ Neue Motive brauchen ggf. einen neuen Ebenen-Typ in `TYPES` (ein GLSL-Baustein u
 |---|---|
 | `server` | `ollama`, `lmstudio`, `llamacpp`, `jan`, `vllm` oder `openai` (OpenAI-kompatibel) |
 | `url` | Adresse des KI-Servers mit Port |
-| `model` | Modell mit Bildverständnis (exakter Name, siehe `ollama list`) |
-| `temperature` | Temperatur |
+| `model` | Modell, das die Funktion baut (exakter Name, siehe `ollama list`) |
+| `describeModel` | optional: Modell mit Bildverständnis, das die Referenz beschreibt, wenn `model` keine Bilder lesen kann |
+| `temperature` | Temperatur (bei Reparaturen mindestens 0,6) |
 | `numCtx` | Kontextgröße (`num_ctx`, nur Ollama) |
 | `maxTokens` | maximale Antwortlänge (`num_predict` bzw. `max_tokens`) |
 | `think` | Denkmodus (aus = schneller) |
 | `timeouts.generationSec` | Zeitlimit pro Modellaufruf |
 | `timeouts.renderMs` | Zeitlimit pro Bild in der Sandbox (Watchdog gegen Endlosschleifen) |
-| `refineRounds` | Runden, in denen das Modell das Rezept nach eigenem Vergleich ändert (0 = aus) |
-| `fitSteps` | Schritte beim automatischen Angleichen an die Referenz |
+| `repairAttempts` | maximale Reparaturversuche |
+| `refineRounds` | Vergleichsrunden mit der Referenz (0 = aus) |
 | `maxImageSide` | längste Bildseite vor dem Senden |
 
-### Rezept (Antwort des Modells)
+### Interface für das Modell (Generator-Vertrag)
 
 ```json
 {
-  "title": "Organisches Netz",
-  "notes": "Sehe: … Ebenen: …",
-  "background": { "top": "#e8e0e8", "bottom": "#405068", "glow": "#fff0e8", "glowX": 0.1, "glowY": 0.2, "glowSize": 0.6, "glowStrength": 0.8 },
-  "camera": { "tilt": 0.6, "roll": -20, "zoom": 0.5, "focus": 0.4, "blur": 0.6, "haze": 0.5 },
-  "light": { "angle": 140 },
-  "layers": [
-    { "type": "mesh", "colorA": "#e8d8e0", "colorB": "#8088a8", "size": 0.45, "fill": 0.3, "chaos": 0.7, "detail": 0.6,
-      "relief": 0.8, "gloss": 0.3, "motion": "flow", "move": 0.4, "speed": 1 }
-  ]
+  "title": "Tintenwolken",
+  "notes": "…",
+  "params": [
+    { "id": "speed", "label": "Tempo", "type": "range", "min": 0, "max": 2, "step": 0.01, "default": 1, "group": "Bewegung" },
+    { "id": "ink", "label": "Tinte", "type": "color", "default": "#2ec4b6" },
+    { "id": "mode", "label": "Muster", "type": "select", "options": ["Wellen", "Kreise", "Linien"], "default": "Wellen" },
+    { "id": "glow", "label": "Leuchten", "type": "toggle", "default": true },
+    { "id": "seed", "label": "Seed", "type": "seed", "default": 7 }
+  ],
+  "shader": "void mainImage(out vec4 fragColor, in vec2 fragCoord) { … }"
 }
 ```
 
-Daraus erzeugt die App Regler (`toParams`) und einen Shader (`toCode`); gespeichert wird beides zusammen mit dem Rezept.
-Ältere Generatoren (vom Modell geschriebene Shader, Canvas 2D) laufen weiter.
+Jeder Eintrag wird ein Regler im Panel **und** eine Uniform `u_<id>` im Shader:
+
+| Typ | Regler | Uniform |
+|---|---|---|
+| `range` | Schieberegler (`min`, `max`, `step`, `default`) | `float`, aktueller Wert |
+| `color` | Farbe in der Palette | `vec3`, rgb 0..1 |
+| `select` | Dropdown (bis drei kurze Optionen: Segment-Knöpfe) | `float`, Index der gewählten Option: `if (u_mode < 0.5) … else if (u_mode < 1.5) …` |
+| `toggle` | Schalter | `float`, 1 = an, 0 = aus |
+| `seed` | Seed mit Würfel | `float` 0..9999 |
+
+`group` fasst Regler zu einem Abschnitt zusammen. Vorhanden im Shader: `iResolution`, `iTime` (Sekunden), `iLoop` (0..1).
+Nicht vorhanden: Texturen/`iChannel`, `#version`, `main()`. Ältere Generatoren (`vec3 image(uv, p, t)`, Canvas 2D) laufen weiter.
 
 ### Sicherheit
 
@@ -131,7 +153,7 @@ mit Zeilennummer im Viewport.
 
 ### Speichern, Presets, Export
 
-- Generatoren liegen im Browser (IndexedDB) mit Rezept, Shader, Parameter-Schema, Prompt, Modellen, Datum, Vorlagen-Version und Thumbnail.
+- Generatoren liegen im Browser (IndexedDB) mit Shader, Parameter-Schema, Prompt, Modellen, Datum, Vorlagen-Version und Thumbnail.
   Über die Karten auf der Seite **KI**: als `.cg-generator.json` sichern bzw. **Importieren** (anderes Gerät/Browser).
 - Presets: in der Sandbox über **+** neben der Preset-Auswahl (pro Generator gespeichert).
 - Export: PNG/JPG in Format-Auflösung (inkl. Finish), **SVG** (nur ältere Canvas-Generatoren), **Video** (MP4),
@@ -144,7 +166,7 @@ mit Zeilennummer im Viewport.
 python3 -m unittest tests/test_server.py -v     # Dateiserver
 ```
 
-- `http://localhost:8765/tests/index.html` – Unit-Tests: Parser, Prompt, Rezept (Ebenen-Typen, Angleichen), Schema, Shader, Sandbox, Prüfung, Client (Ollama/OpenAI, Ausweichstufen, Fehler), Speicher
+- `http://localhost:8765/tests/index.html` – Unit-Tests: Parser, Prompt, Schema, Shader, Sandbox, Prüfung, Client (Ollama/OpenAI, Ausweichstufen, Fehler), Speicher
 - `http://localhost:8765/tests/e2e.html?run=1` – End-to-End gegen das echte lokale Ollama, über beide Schnittstellen (einige Minuten)
 
 ## Fehlerbehebung
@@ -156,7 +178,7 @@ python3 -m unittest tests/test_server.py -v     # Dateiserver
 | Seite auf HTTPS, Server auf anderem Rechner | Adresse muss mit `https://` beginnen |
 | Safari verbindet nicht | Chrome, Edge oder Firefox verwenden |
 | „Modell … ist nicht installiert“ | angezeigten `ollama pull …`-Befehl ausführen oder anderes Modell wählen |
-| „… kann keine Bilder lesen“ | Bild-Modell mit Vision-Fähigkeit wählen (z. B. `gemma4:12b-mlx`, `llama3.2-vision`) |
+| Modell kann keine Bilder lesen | oben bei „Bild lesen“ ein Modell mit Bildverständnis wählen (z. B. `gemma4:12b-mlx`) – oder ohne Bild nur mit Text arbeiten |
 | Zeitüberschreitung | `timeouts` erhöhen; beim ersten Aufruf lädt der Server das Modell erst |
-| Ergebnis trifft das Bild nicht | andere Fassung unter dem Ergebnis wählen, „Nochmal versuchen“ (die Ebenen-Auswahl schwankt), Regler nachstellen (Neigung, Größe) |
+| Modell liefert keine lauffähige Funktion | „Nochmal versuchen“, Auftrag vereinfachen oder ein anderes Modell wählen; im Protokoll lassen sich die Fehler aufklappen |
 | Generator „hängt oder ist zu langsam“ | Regler mit hoher Anzahl verringern oder `timeouts.renderMs` erhöhen |

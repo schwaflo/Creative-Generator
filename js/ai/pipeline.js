@@ -1,9 +1,12 @@
 'use strict';
-/* KI: Ablauf – das Modell ist Art Director (js/ai/recipe.js).
-   1. Bild + Wunsch -> Modell beschreibt das Bild als Rezept aus Ebenen (eine JSON-Antwort, kein Code)
-   2. Die App baut daraus den Shader und gleicht Zahlen und Farben automatisch an die Referenz an (ohne Modell)
-   3. Runden: Das Modell sieht das Ergebnis neben der Referenz und ändert das Rezept; es zählt die gemessene Übereinstimmung
-   Speicher (Ollama): nur dieses eine Modell ist geladen und wird am Ende entladen. */
+/* KI: Ablauf – der Generator ist das Interface, das Modell baut die Funktion (Regler + Shader).
+   Drei Wege zur Aufgabe:
+     Bild          – das Code-Modell kann Bilder lesen und sieht die Referenz selbst
+     Beschreibung  – ein zweites Modell (mit Bildverständnis) beschreibt die Referenz als Text für das Code-Modell
+     Text          – kein Bild: die Funktion entsteht nur aus dem geschriebenen Auftrag
+   Danach: Prüfung in der Sandbox, Fehler gehen ins selbe Gespräch zurück; mit Referenz folgt ein Vergleich
+   (selbst per Bild oder als Text vom zweiten Modell). Bestehende Generatoren lassen sich per Prompt ändern (improve).
+   Speicher (Ollama): es ist immer nur ein Modell geladen; am Ende wird entladen. */
 CG.ai = CG.ai || {};
 CG.ai.pipeline = (() => {
   const C = () => CG.ai.client;
@@ -43,103 +46,210 @@ CG.ai.pipeline = (() => {
     return { base64: url.split(',')[1], dataUrl: url, w, h };
   }
 
-  async function generate(text, { signal, aspect = 16 / 9, onEvent = () => {}, reference = null } = {}) {
-    const c = cfg(), model = c.model, RC = CG.ai.recipe;
-    if (!reference) throw fail('input', 'Bitte zuerst ein Referenzbild wählen.');
-    if (known(model) && !supportsVision(model)) throw fail('model', `„${model}“ kann keine Bilder lesen. Bitte ein Modell mit Bildverständnis wählen (z. B. gemma4).`);
+  // Welcher Weg gilt für die aktuelle Auswahl? vision: kann das Code-Modell Bilder lesen (bei unbekannten Servern: ja, solange kein Beschreibungs-Modell gewählt ist)
+  function plan(hasImage) {
+    const c = cfg(), model = c.model, describer = c.describeModel && c.describeModel !== model ? c.describeModel : '';
+    const vision = known(model) ? supportsVision(model) : !describer;
+    const source = hasImage && vision ? 'image' : hasImage && describer ? 'description' : 'text';
+    return { model, describer, vision, source, imageUnused: hasImage && source === 'text' };
+  }
+
+  // Freitext-Antwort eines Bild-Modells (Beschreibung oder Vergleich); danach wird es wieder entladen
+  async function ask(model, messages, { signal, onEvent, maxTokens = 900 }) {
+    const c = cfg();
     await C().ensureOnly(model);
-    const base = CG.ai.prompt.messages(text, reference);
-    const ref = await RC.referenceFeatures(reference, aspect);
-    const rd = new RC.Renderer();
+    const d = deadline(signal, c.timeouts.generationSec, 'Bild-Modell');
+    try {
+      const res = await C().chat({ model, messages, temperature: 0.2, numCtx: Math.min(c.numCtx, 8192), maxTokens, think: thinkOpt(model), noThink: true, keepAlive: '5m' },
+        { signal: d.signal, onChunk: (t, n) => onEvent({ type: 'tokens', n }) });
+      return String(res.text || '').trim();
+    } finally { d.done(); await C().unload(model); }
+  }
+
+  /* Referenz von einem zweiten Modell beschreiben lassen (auch einzeln nutzbar: „Prompt erst prüfen“) */
+  async function describe(reference, { signal, onEvent = () => {} } = {}) {
+    const { describer } = plan(true);
+    if (!describer) throw fail('model', 'Kein Modell für die Bildbeschreibung gewählt.');
+    onEvent({ type: 'describe', model: describer });
+    const text = await ask(describer, CG.ai.prompt.describeMessages(reference), { signal, onEvent });
+    if (!text) throw fail('invalid', `„${describer}“ hat keine Beschreibung geliefert.`);
+    onEvent({ type: 'described', model: describer, text });
+    return text;
+  }
+
+  /* Ein Gespräch mit dem Code-Modell bis zu einer Funktion, die die Prüfung besteht (mit Reparaturen).
+     Liefert { answer, params, code, warnings } oder null, wenn nichts Lauffähiges entstand. */
+  async function solve(st, messages, base, { signal, aspect, onEvent, round, rounds, prevParams }) {
+    const c = cfg();
+    let fixing = false, fresh = false, lastKey = '';
+    for (;;) {
+      onEvent({ type: 'ask', round, rounds, fixing, model: st.model, improve: st.improve });
+      const d = deadline(signal, c.timeouts.generationSec, 'Generator');
+      let res;
+      try {
+        res = await C().chat({
+          model: st.model, messages, schema: CG.ai.schema.SHADER, schemaName: 'shader_generator',
+          // Reparatur: mehr Variation, sonst kommt fast dieselbe Antwort zurück
+          temperature: fresh ? Math.max(0.8, c.temperature) : fixing ? Math.max(0.6, c.temperature) : c.temperature,
+          numCtx: c.numCtx, maxTokens: c.maxTokens, think: thinkOpt(st.model), noThink: !c.think, keepAlive: '10m',
+        }, { signal: d.signal, onChunk: (t, n) => onEvent({ type: 'tokens', n }) });
+      } finally { d.done(); }
+      const j = CG.ai.parse.extractJson(res.text) || {};
+      const answer = {
+        title: String(j.title || st.title || '').slice(0, 60),
+        notes: String(j.notes || '').slice(0, 4000),
+        params: Array.isArray(j.params) ? j.params : [],
+        shader: CG.ai.parse.extractShader(j.shader != null ? String(j.shader) : res.text) || '',
+      };
+      const td = CG.ai.shader.tidy(answer.params, answer.shader, prevParams);
+      answer.params = td.params; answer.shader = td.code;
+      if (answer.title) st.title = answer.title;
+      onEvent({ type: 'notes', round, notes: answer.notes, title: answer.title, fixes: td.fixes });
+      const v = await CG.ai.validate.runShader(answer.params, answer.shader, { sandbox: st.box, aspect, renderMs: c.timeouts.renderMs,
+        onStep: step => onEvent({ type: 'step', step }) });
+      if (v.ok) { onEvent({ type: 'ok', round, warnings: v.warnings }); return { answer: { ...answer, params: v.params }, params: v.params, code: answer.shader, warnings: v.warnings }; }
+      const last = --st.fixesLeft < 0;
+      onEvent({ type: 'failed', round, errors: v.errors, attempt: st.repairs + 1, max: st.maxFixes, last });
+      if (last) return null;
+      st.repairs++; fixing = true;
+      // derselbe Fehler wie beim letzten Versuch (ohne Zeilennummern und Code-Ausschnitte verglichen): Das Modell hängt fest
+      const key = v.errors.map(e => e.split(' | ').map(x => x.split('  →  ')[0].replace(/Zeile \d+: /g, '').replace(/\(.*?\)/g, '')).join('|')).join('||');
+      if (key === lastKey && st.hasBest) { onEvent({ type: 'stuck', kept: true }); return null; }
+      if (key === lastKey) { messages = base; fresh = true; onEvent({ type: 'stuck', kept: false }); }
+      else messages = CG.ai.prompt.feedback(base, answer, { errors: v.errors });
+      lastKey = key;
+    }
+  }
+
+  /* Neue Funktion bauen. text: der (editierbare) Auftrag; reference: Base64-JPEG oder null */
+  async function generate(text, { signal, aspect = 16 / 9, onEvent = () => {}, reference = null } = {}) {
+    const c = cfg(), P = CG.ai.prompt, pl = plan(!!reference), model = pl.model;
+    if (!model) throw fail('model', 'Bitte zuerst ein Modell wählen.');
+    onEvent({ type: 'plan', ...pl });
+    // Weg „Beschreibung“: Platzhalter im Auftrag durch die Beschreibung des zweiten Modells ersetzen
+    if (pl.source === 'description' && text.includes(P.SLOT)) text = text.split(P.SLOT).join(await describe(reference, { signal, onEvent }));
+    else text = text.split(P.SLOT).join('(keine Beschreibung)');
+    await C().ensureOnly(model);
+    const base = P.messages(text, pl.source === 'image' ? reference : null);
+    const box = new CG.ai.Sandbox({ timeout: c.timeouts.renderMs });
+    // Vergleichsrunden nur mit Referenz (selbst per Bild oder als Text vom zweiten Modell)
+    const rounds = 1 + (pl.source === 'text' ? 0 : Math.max(0, c.refineRounds | 0));
+    const maxFixes = Math.max(1, c.repairAttempts | 0);
+    const st = { model, box, title: '', repairs: 0, fixesLeft: maxFixes, maxFixes, hasBest: false };
     let messages = base, best = null;
-    const all = [];                                       // Fassungen aller Runden (zur Auswahl)
-    const rounds = 1 + Math.max(0, c.refineRounds | 0);
     try {
       for (let round = 0; round < rounds; round++) {
-        onEvent({ type: 'ask', round, rounds });
-        const d = deadline(signal, c.timeouts.generationSec, 'Generator');
-        let res;
-        try {
-          res = await C().chat({
-            model, messages, schema: RC.SCHEMA, schemaName: 'recipe', temperature: c.temperature,
-            numCtx: c.numCtx, maxTokens: c.maxTokens, think: thinkOpt(model), noThink: !c.think, keepAlive: '10m',
-          }, { signal: d.signal, onChunk: (t, n) => onEvent({ type: 'tokens', n }) });
-        } finally { d.done(); }
-        const raw = CG.ai.parse.extractJson(res.text);
-        if (!raw && !best) throw fail('invalid', 'Das Modell hat kein lesbares Rezept geliefert. Bitte nochmal versuchen.');
-        if (!raw) break;                                    // spätere Runde unlesbar: bisheriges Ergebnis bleibt
-        let recipe = RC.normalize(raw);
-        onEvent({ type: 'recipe', round, notes: recipe.notes, title: recipe.title, layers: RC.describe(recipe) });
-        // Shader aus Bausteinen der App, dann automatisch angleichen
-        let params0 = CG.ai.schema.validateParams(RC.toParams(recipe)).params, code = RC.toCode(recipe);
-        rd.compile(params0, code);
-        const progress = p => onEvent({ type: 'fit', round, done: p.done, steps: p.steps, from: RC.similarity(p.start), to: RC.similarity(p.best) });
-        let fitted = await RC.fit(rd, params0, ref, { steps: c.fitSteps, signal, onProgress: progress });
-        // Ebenen, ohne die das Bild mindestens so gut passt, fliegen raus – danach neu angleichen
-        const drop = RC.prune(rd, fitted.params, ref);
-        if (drop.length) {
-          const first = fitted.start;
-          onEvent({ type: 'pruned', round, layers: drop.map(i => RC.TYPES[recipe.layers[i].type].label) });
-          recipe = RC.withParams(recipe, fitted.params);
-          recipe.layers = recipe.layers.filter((L, i) => !drop.includes(i));
-          params0 = CG.ai.schema.validateParams(RC.toParams(recipe)).params; code = RC.toCode(recipe);
-          rd.compile(params0, code);
-          fitted = await RC.fit(rd, params0, ref, { steps: Math.round(c.fitSteps * 0.6), signal, onProgress: progress });
-          fitted.start = first;
-        }
-        const cand = { code, params: fitted.params, recipe: RC.withParams(recipe, fitted.params), score: fitted.best, title: recipe.title, round };
-        rd.compile(cand.params, cand.code);
-        cand.thumb = snapshot(rd, aspect, Math.round(480 / Math.max(aspect, 1)), 'image/png');
-        cand.similarity = RC.similarity(cand.score);
-        all.push(cand);
-        // eine spätere Runde ersetzt die frühere nur, wenn sie messbar besser ist (kleine Unterschiede sind Rauschen)
-        const better = !best || cand.score < best.score * 0.97;
-        onEvent({ type: 'fitted', round, from: RC.similarity(fitted.start), to: RC.similarity(fitted.best), kept: better });
-        if (better) best = cand;
+        const r = await solve(st, messages, base, { signal, aspect, onEvent, round, rounds, prevParams: best && best.params });
+        if (!r) break;
+        best = r; st.hasBest = true;
         if (round + 1 >= rounds) break;
-        // bestes Ergebnis neben der Referenz zeigen – das Modell ändert das Rezept
-        rd.compile(best.params, best.code);
-        const compare = await compareImage(rd, aspect, reference);
-        onEvent({ type: 'look', round });
-        messages = CG.ai.prompt.feedback(base, { title: best.recipe.title, notes: best.recipe.notes, ...best.recipe }, { compareBase64: compare });
+        const compare = await compareImage(box, best, aspect, reference);
+        if (pl.source === 'image') {                        // das Modell vergleicht selbst
+          onEvent({ type: 'look', round });
+          messages = P.feedback(base, best.answer, { compareBase64: compare, warnings: best.warnings });
+        } else {                                            // das zweite Modell vergleicht und schreibt dem Code-Modell
+          onEvent({ type: 'critique', model: pl.describer });
+          await C().unload(model);
+          const critique = await ask(pl.describer, P.critiqueMessages(compare), { signal, onEvent, maxTokens: 500 });
+          onEvent({ type: 'critiqued', model: pl.describer, text: critique });
+          if (!critique) break;
+          await C().ensureOnly(model);
+          messages = P.feedback(base, best.answer, { critique, warnings: best.warnings });
+        }
       }
-      return { ...best, candidates: all, repairs: 0, warnings: [] };
+      if (!best) throw fail('invalid', 'Das Modell hat keine lauffähige Funktion geliefert. Nochmal versuchen oder ein anderes Modell wählen.');
+      const thumb = await thumbnail(box, best, aspect);
+      return { code: best.code, params: best.params, warnings: best.warnings, repairs: st.repairs, thumb, title: st.title, source: pl.source, prompt: text };
     } finally {
-      rd.destroy();
+      box.destroy();
       await C().unload(model);
     }
   }
 
-  // aktuelles Programm des Renderers als Bild (Data-URL)
-  function snapshot(rd, aspect, h, mime, quality) {
-    const w = Math.max(8, Math.round(h * aspect));
-    return rd.render(w, h, 0.25).toDataURL(mime, quality);
+  /* Bestehenden Generator per Prompt ändern. gen: gespeicherter Shader-Generator; request: Änderungswunsch */
+  async function improve(gen, request, { signal, aspect = 16 / 9, onEvent = () => {}, promptText = null } = {}) {
+    const c = cfg(), P = CG.ai.prompt, pl = plan(true), model = pl.model;
+    if (!model) throw fail('model', 'Bitte zuerst ein Modell wählen.');
+    if (gen.kind !== 'shader') throw fail('input', 'Dieser ältere Generator (Canvas) lässt sich nicht per Prompt ändern.');
+    if (!(request || '').trim()) throw fail('input', 'Bitte schreiben, was sich ändern soll.');
+    await C().ensureOnly(model);
+    const box = new CG.ai.Sandbox({ timeout: c.timeouts.renderMs });
+    const maxFixes = Math.max(1, c.repairAttempts | 0);
+    const st = { model, box, title: gen.name, repairs: 0, fixesLeft: maxFixes, maxFixes, hasBest: false, improve: true };
+    try {
+      // kann das Modell Bilder lesen, sieht es das aktuelle Ergebnis
+      let shot = null;
+      if (pl.vision) { try { const o = await renderBitmap(box, gen, aspect, 448); const cv = document.createElement('canvas'); cv.width = o.w; cv.height = o.h;
+        cv.getContext('2d').drawImage(o.bitmap, 0, 0); o.bitmap.close(); shot = cv.toDataURL('image/jpeg', 0.88).split(',')[1]; cv.width = cv.height = 0; } catch (e) { shot = null; } }
+      const base = P.improveMessages(promptText || P.improveText({ gen, request }), shot);
+      const r = await solve(st, base, base, { signal, aspect, onEvent, round: 0, rounds: 1, prevParams: gen.params });
+      if (!r) throw fail('invalid', 'Die geänderte Funktion läuft nicht – der Generator bleibt unverändert.');
+      const thumb = await thumbnail(box, r, aspect);
+      return { code: r.code, params: r.params, warnings: r.warnings, repairs: st.repairs, thumb, title: gen.name };
+    } finally {
+      box.destroy();
+      await C().unload(model);
+    }
+  }
+
+  async function renderBitmap(box, gen, aspect, h, t = 0.25) {
+    const SH = CG.ai.shader;
+    const w = Math.round(h * aspect);
+    const values = {}; gen.params.forEach(p => { values[p.id] = p.default; });
+    const r = await box.shader({ frag: SH.source(gen.params, gen.code), uniforms: SH.uniforms(gen.params, values), t, w, h });
+    return { bitmap: r.bitmap, w, h };
   }
 
   // Vergleichsbild: links Referenz, rechts aktuelles Ergebnis, beide beschriftet (Base64-JPEG)
-  async function compareImage(rd, aspect, reference) {
-    const h = 448, w = Math.max(8, Math.round(h * aspect));
-    const out = rd.render(w, h, 0.25);
+  async function compareImage(box, gen, aspect, reference) {
+    const h = 448;
+    const out = await renderBitmap(box, gen, aspect, h);
     const ref = await createImageBitmap(await (await fetch('data:image/jpeg;base64,' + reference)).blob());
     const rw = Math.round(h * ref.width / ref.height), gap = 16;
-    const cv = document.createElement('canvas'); cv.width = rw + gap + w; cv.height = h;
+    const cv = document.createElement('canvas'); cv.width = rw + gap + out.w; cv.height = h;
     const g = cv.getContext('2d');
     g.fillStyle = '#ffffff'; g.fillRect(0, 0, cv.width, h);
-    g.drawImage(ref, 0, 0, rw, h); g.drawImage(out, rw + gap, 0, w, h);
-    ref.close();
+    g.drawImage(ref, 0, 0, rw, h); g.drawImage(out.bitmap, rw + gap, 0, out.w, h);
+    ref.close(); out.bitmap.close();
     const label = (txt, x) => { g.font = 'bold 22px sans-serif'; const tw = g.measureText(txt).width; g.fillStyle = '#e8505b'; g.fillRect(x + 8, 8, tw + 16, 32); g.fillStyle = '#ffffff'; g.fillText(txt, x + 16, 32); };
     label('REFERENZ', 0); label('ERGEBNIS', rw + gap);
     const url = cv.toDataURL('image/jpeg', 0.88); cv.width = cv.height = 0;
     return url.split(',')[1];
   }
 
-  /* Im Browser speichern + als Funktion registrieren (ein normaler Shader-Generator mit Rezept) */
-  async function save({ name, code, params, recipe, score, prompt, thumb, aspect }) {
+  async function thumbnail(box, gen, aspect) {
+    try {
+      const out = await renderBitmap(box, gen, aspect, Math.round(480 / Math.max(aspect, 1)));
+      const c = document.createElement('canvas'); c.width = out.w; c.height = out.h;
+      c.getContext('2d').drawImage(out.bitmap, 0, 0); out.bitmap.close();
+      const url = c.toDataURL('image/png'); c.width = c.height = 0;
+      return url;
+    } catch (e) { return null; }
+  }
+
+  /* Im Browser speichern + als Funktion registrieren */
+  async function save({ name, code, params, prompt, repairs, thumb, aspect, source }) {
     const c = cfg();
-    const gen = await CG.ai.store.create({ kind: 'shader', name, code, params, recipe, score, prompt, repairs: 0, thumb, aspect,
-      models: { server: CG.ai.settings.server().label, model: c.model }, templateVersion: CG.ai.prompt.VERSION });
+    const gen = await CG.ai.store.create({ kind: 'shader', name, code, params, prompt, repairs, thumb, aspect, source,
+      models: { server: CG.ai.settings.server().label, model: c.model, describer: source === 'description' ? c.describeModel : undefined }, templateVersion: CG.ai.prompt.VERSION });
     return CG.ai.registry.register(gen);
   }
 
-  return { setModels, prepareImage, generate, save, supportsVision: m => supportsVision(m) };
+  /* Geänderte Fassung in denselben Generator schreiben; die vorige Fassung bleibt für „Rückgängig“ erhalten */
+  async function applyImprove(gen, res, request) {
+    const prev = { code: gen.code, params: gen.params, thumb: gen.thumb, date: Date.now(), request };
+    const next = { ...gen, code: res.code, params: res.params, thumb: res.thumb || gen.thumb,
+      history: [...(gen.history || []), prev].slice(-10), models: { ...(gen.models || {}), lastEdit: cfg().model } };
+    await CG.ai.store.put(next);
+    return CG.ai.registry.register(next);
+  }
+  async function undoImprove(gen) {
+    const h = (gen.history || []).slice(), prev = h.pop();
+    if (!prev) return null;
+    const next = { ...gen, code: prev.code, params: prev.params, thumb: prev.thumb, history: h };
+    await CG.ai.store.put(next);
+    return CG.ai.registry.register(next);
+  }
+
+  return { setModels, prepareImage, plan, describe, generate, improve, save, applyImprove, undoImprove, supportsVision: m => supportsVision(m) };
 })();

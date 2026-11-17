@@ -132,12 +132,15 @@ CG.panel = (() => {
         <select class="pill-select" aria-label="Preset">
           <option value="">Preset</option>${fn.presets.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join('')}
         </select>
+        ${fn.ai && fn.shader && CG.aiPage ? `<button class="act" type="button" data-a="ai" title="Diese Funktion per Prompt verbessern">${CG.icon('spark')}</button>` : ''}
         ${fn.savePreset ? `<button class="act" type="button" data-a="save" title="Reglerstand als Preset speichern">${CG.icon('plus')}</button>` : ''}
         <button class="act" type="button" data-a="rand" title="Variation">${CG.icon('shuffle')}</button>
         <button class="act" type="button" data-a="reset" title="Zurücksetzen">${CG.icon('reset')}</button>
       </div>`);
     const sel = row.querySelector('select');
     const rand = row.querySelector('[data-a=rand]'), reset = row.querySelector('[data-a=reset]');
+    const aiBtn = row.querySelector('[data-a=ai]');
+    if (aiBtn) aiBtn.onclick = () => { H.tick(); CG.aiPage.edit(fn.gen.id); };
     const saveBtn = row.querySelector('[data-a=save]');
     if (saveBtn) saveBtn.onclick = async () => {
       const name = (prompt('Name des Presets', `Preset ${fn.presets.length}`) || '').trim();

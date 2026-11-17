@@ -2,8 +2,8 @@
   "server": "ollama",
   "url": "http://localhost:11434",
   "model": "gemma4:12b-mlx",
-  "temperature": 0.4,
-  "numCtx": 8192,
+  "temperature": 0.25,
+  "numCtx": 12288,
   "maxTokens": 8192,
   "think": false,
   "timeouts": {
@@ -12,5 +12,6 @@
   },
   "refineRounds": 1,
   "maxImageSide": 1024,
-  "fitSteps": 900
+  "repairAttempts": 3,
+  "describeModel": ""
 }
