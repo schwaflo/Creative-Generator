@@ -119,7 +119,11 @@ CG.ai = CG.ai || {};
       // Anteil der häufigsten Farbe: 1 = alles eine Farbe. Kleine helle Formen auf dunklem Grund zählen mit (anders als die Spanne)
       let modeN = 0, mode = 0; for (let k = 0; k < cols.length; k++) if (cols[k] > modeN) { modeN = cols[k]; mode = k; }
       const hex = v => (((v & 31) << 3) | 4).toString(16).padStart(2, '0');
-      return { nonUniform: diff / total, mean: sum / total, spread: q(0.98) - q(0.02), flat: modeN / total, modeColor: '#' + hex(mode >> 10) + hex(mode >> 5) + hex(mode),
+      // sichtbarer Inhalt: Anteil der Pixel, die sich deutlich (> 10 %) von der Grundfarbe abheben
+      const mr = ((mode >> 10 & 31) << 3) | 4, mg = ((mode >> 5 & 31) << 3) | 4, mb = ((mode & 31) << 3) | 4;
+      let content = 0;
+      for (let i = 0; i < d.length; i += 4) if (Math.max(Math.abs(d[i] - mr), Math.abs(d[i + 1] - mg), Math.abs(d[i + 2] - mb)) > 26) content++;
+      return { nonUniform: diff / total, mean: sum / total, spread: q(0.98) - q(0.02), flat: modeN / total, content: content / total, modeColor: '#' + hex(mode >> 10) + hex(mode >> 5) + hex(mode),
         grid: grid.map((v, i) => v / Math.max(1, cnt[i])),
         rgb: rgb.map((v, i) => v / Math.max(1, cnt[(i / 3) | 0])) };
     }

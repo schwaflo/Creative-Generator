@@ -77,6 +77,22 @@ CG.ai.pipeline = (() => {
     return text;
   }
 
+  // dieselben ~160 Zeichen mindestens dreimal in der Antwort = Wiederholungsschleife
+  function looping(t) {
+    if (t.length < 1500) return false;
+    const tail = t.slice(-160);
+    if (tail.replace(/\s+/g, '').length < 60) return false;
+    let n = 0, i = -1;
+    while ((i = t.indexOf(tail, i + 1)) !== -1) if (++n >= 3) return true;
+    return false;
+  }
+  const anySignal = list => {
+    if (AbortSignal.any) return AbortSignal.any(list);
+    const ac = new AbortController();
+    list.forEach(sg => { if (sg.aborted) ac.abort(sg.reason); else sg.addEventListener('abort', () => ac.abort(sg.reason), { once: true }); });
+    return ac.signal;
+  };
+
   /* Ein Gespräch mit dem Code-Modell bis zu einer Funktion, die die Prüfung besteht (mit Reparaturen).
      Liefert { answer, params, code, warnings } oder null, wenn nichts Lauffähiges entstand. */
   async function solve(st, messages, base, { signal, aspect, onEvent, round, rounds, prevParams }) {
@@ -85,15 +101,27 @@ CG.ai.pipeline = (() => {
     for (;;) {
       onEvent({ type: 'ask', round, rounds, fixing, model: st.model, improve: st.improve });
       const d = deadline(signal, c.timeouts.generationSec, 'Generator');
-      let res;
+      // ohne Wiederholungsstrafe können Modelle in eine Schleife geraten (derselbe Abschnitt immer wieder) – dann abbrechen
+      const loop = new AbortController(), both = anySignal([d.signal, loop.signal]);
+      let res = null, looped = false;
       try {
         res = await C().chat({
           model: st.model, messages, code: true,                // freie Antwort (kein JSON-Zwang), keine Wiederholungsstrafe
           // Reparatur: mehr Variation, sonst kommt fast dieselbe Antwort zurück
           temperature: fresh ? Math.max(0.8, c.temperature) : fixing ? Math.max(0.6, c.temperature) : c.temperature,
           numCtx: c.numCtx, maxTokens: c.maxTokens, think: thinkOpt(st.model), noThink: !c.think, keepAlive: '10m',
-        }, { signal: d.signal, onChunk: (t, n) => onEvent({ type: 'tokens', n }) });
+        }, { signal: both, onChunk: (t, n) => { onEvent({ type: 'tokens', n }); if (n % 48 === 0 && looping(t)) loop.abort(); } });
+      } catch (e) {
+        if (!loop.signal.aborted || (signal && signal.aborted) || d.signal.aborted) throw e;
+        looped = true;
       } finally { d.done(); }
+      if (looped) {
+        const lastTry = --st.fixesLeft < 0;
+        onEvent({ type: 'failed', round, errors: ['Die Antwort hing in einer Wiederholungsschleife und wurde abgebrochen.'], attempt: st.repairs + 1, max: st.maxFixes, last: lastTry });
+        if (lastTry) return null;
+        st.repairs++; messages = base; fresh = true; fixing = true; lastKey = '';
+        continue;
+      }
       const f = CG.ai.parse.extractFunction(res.text);
       const answer = {
         title: String(f.title || st.title || '').slice(0, 60),
@@ -252,5 +280,5 @@ CG.ai.pipeline = (() => {
     return CG.ai.registry.register(next);
   }
 
-  return { setModels, prepareImage, plan, describe, generate, improve, save, applyImprove, undoImprove, supportsVision: m => supportsVision(m) };
+  return { setModels, prepareImage, plan, describe, generate, improve, save, applyImprove, undoImprove, supportsVision: m => supportsVision(m), _looping: looping };
 })();

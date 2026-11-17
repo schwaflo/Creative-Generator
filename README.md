@@ -82,10 +82,15 @@ Regler, Dropdowns, Schalter, Farben und den Seed baut und wie sie im Shader anko
 - Beim Code-Schreiben sind Wiederholungsstrafen aus (`presence_penalty`/`frequency_penalty` 0, `repeat_penalty` 1). Manche
   Modelle bringen z. B. `presence_penalty 1.5` mit – in Code kommen dieselben Wörter ständig vor, das Modell weicht dann auf
   erfundene Namen aus.
-- Kompiliert ein Shader nicht, probiert die App zuerst mechanische Korrekturen und übernimmt sie nur, wenn der Shader danach
-  kompiliert: Ganzzahlen in Rechnungen mit Kommazahlen (`2` → `2.0`), `int`-Schleifenzähler (`pow(0.5, i)`), Funktionen, die
-  vor ihrer Definition benutzt werden (Prototypen), Funktionen innerhalb von Funktionen, fehlende schließende Klammern.
-  Erst was dann noch fehlt, geht ans Modell.
+- Kompiliert ein Shader nicht, probiert die App zuerst mechanische Korrekturen – jede wird übernommen, sobald sie Fehler
+  beseitigt (vom Compiler geprüft): Typen in der gemeldeten Zeile (`vec3 glow = 0.8` → `vec3(0.8)`, int-Variablen in
+  Kommazahl-Rechnungen), Ganzzahlen in Rechnungen mit Kommazahlen (`2` → `2.0`), `int`-Schleifenzähler (`pow(0.5, i)`),
+  Funktionen, die vor ihrer Definition benutzt werden (Prototypen), Funktionen innerhalb von Funktionen, fehlende Klammern,
+  `fragColor` mit `vec3`, reservierte Wörter als Namen (`sample`, `input` …), eine selbst geschriebene, kaputte Rausch- oder
+  Zufallsfunktion (`noise`, `fbm`, `hash` …) wird durch die der App ersetzt. Nur was dann noch fehlt, geht ans Modell –
+  zusammen mit dem bereits korrigierten Code und einem kurzen Lösungshinweis je Compiler-Meldung.
+- Gerät ein Modell in eine Wiederholungsschleife (derselbe Abschnitt immer wieder), bricht die App die Antwort ab und
+  startet frisch, statt bis zum Token-Limit zu warten.
 - Der Auftrag nennt die typischen GLSL-Stolperfallen und enthält ein kurzes, korrektes Beispiel (nur für Format und Sprache).
 - Die App stellt übliche Hilfsfunktionen bereit, die Modelle oft aufrufen, ohne sie passend zu definieren: `hash`, `noise`, `fbm`
   (jeweils für mehrere Argumenttypen), `rot`, `smin`, `palette`. Eigene Fassungen des Modells haben Vorrang.

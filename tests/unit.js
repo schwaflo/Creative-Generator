@@ -411,6 +411,13 @@ describe('Ablauf', () => {
     set({ model: 'coder', describeModel: '' });
     const t = PL.plan(true); assert.equal(t.source, 'text'); assert.equal(t.imageUnused, true);
   });
+  it('Wiederholungsschleifen in der Antwort werden erkannt, normaler Code nicht', () => {
+    const L = PL._looping;
+    const code = AI.prompt.format(JSON.parse(AI.prompt.EXAMPLE));
+    assert.equal(L(code + code.slice(0, 400)), false);
+    const rep = 'col += vec3(0.1, 0.2, 0.3) * smoothstep(0.0, 1.0, length(uv - vec2(0.5, 0.5))) * sin(iTime * 2.0);\n';
+    assert.equal(L(code + rep.repeat(4)), true);
+  });
   it('Unbekannte Fähigkeiten (OpenAI-kompatibel): Bild direkt, außer ein Beschreibungs-Modell ist gewählt', () => {
     PL.setModels([{ name: 'x' }, { name: 'y' }]);
     set({ model: 'x', describeModel: '' }); assert.equal(PL.plan(true).source, 'image');
@@ -463,7 +470,7 @@ describe('Shader', () => {
     const M = b => 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; ' + b + ' }';
     // pow(0.5, i) mit int-Schleife
     const a = await run(M('float v = 0.0; for (int i = 0; i < 5; i++) { v += pow(0.5, i) * sin(uv.x * 9.0 + float(i)); } fragColor = vec4(vec3(0.5 + 0.5 * v), 1.0);'));
-    assert.ok(a.ok, a.errors.join(' | ')); assert.match(a.code, /for \(float i = float\(0\); i < float\(5\); i \+= 1\.0\)/); assert.ok(a.fixes.length);
+    assert.ok(a.ok, a.errors.join(' | ')); assert.match(a.code, /for \(float i = float\(0(\.0)?\); i < float\(5(\.0)?\); i \+= 1\.0\)/); assert.ok(a.fixes.length);
     // Ganzzahl mal Kommazahl
     const b = await run(M('float k = uv.x * 2 + uv.y * 3; fragColor = vec4(vec3(fract(k)), 1.0);'));
     assert.ok(b.ok, b.errors.join(' | ')); assert.match(b.code, /uv\.x \* 2\.0 \+ uv\.y \* 3\.0/);
@@ -476,6 +483,48 @@ describe('Shader', () => {
     // int-Anweisungen und Array-Indizes bleiben unverändert
     const L = AI.shader._t.floatLiterals('int n = 3; float a[4]; a[2] = 1; float x = y * 2; for (int i = 0; i < 4; i++) { x += a[i]; } int m = n % 2;');
     assert.equal(L, 'int n = 3; float a[4]; a[2] = 1.0; float x = y * 2.0; for (int i = 0; i < 4; i++) { x += a[i]; } int m = n % 2;');
+  });
+  it('Rettung: fragColor mit vec3, reservierte Namen; Teilrettung gibt nur den Restfehler ans Modell', async () => {
+    const run = c => AI.validate.runShader([], c, { sandbox: box });
+    const a = await run('void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; vec3 col = vec3(uv, 0.5); fragColor = col; }');
+    assert.ok(a.ok, a.errors.join(' | ')); assert.ok(a.fixes.includes('fragColor als vec4'));
+    const b = await run('void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; float sample = fract(uv.x * 7.0); vec3 input = vec3(sample); fragColor = vec4(input, 1.0); }');
+    assert.ok(b.ok, b.errors.join(' | ')); assert.match(b.code, /float sample_ = /); assert.match(b.code, /vec3 input_ = vec3\(sample_\)/);
+    // zwei Fehler: Funktion vor Definition (rettbar) + unbekannter Name (nicht rettbar)
+    const c = await run('void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; fragColor = vec4(vec3(wave(uv) * gibtsnicht), 1.0); }\nfloat wave(vec2 p){ return sin(p.x * 9.0); }');
+    assert.equal(c.ok, false); assert.ok(c.fixes.includes('Prototypen ergänzt'), c.fixes.join());
+    assert.match(c.errors[0], /gibtsnicht/); assert.ok(!/'wave'/.test(c.errors[0]), 'gerettete Fehler werden nicht mehr gemeldet: ' + c.errors[0]);
+    assert.ok(!/cg_v4/.test(c.code), 'keine Korrektur ohne Fortschritt');
+    assert.match(c.code, /^float wave\(vec2 p\);/, 'das Modell bekommt den teilweise korrigierten Code');
+  });
+  it('Rettung anhand der Fehlerzeile: float an vec3 zugewiesen, int-Variable in Kommazahl-Rechnung', async () => {
+    const run = c => AI.validate.runShader([], c, { sandbox: box });
+    const a = await run('void mainImage(out vec4 fragColor, in vec2 fragCoord){\n  vec2 uv = fragCoord / iResolution.xy;\n  vec3 glow = vec3(0.0);\n  glow = smoothstep(0.0, 1.0, uv.x) * 0.8;\n  fragColor = vec4(glow, 1.0);\n}');
+    assert.ok(a.ok, a.errors.join(' | ')); assert.match(a.code, /glow = vec3\(smoothstep\(0\.0, 1\.0, uv\.x\) \* 0\.8\);/);
+    const b = await run('void mainImage(out vec4 fragColor, in vec2 fragCoord){\n  vec2 uv = fragCoord / iResolution.xy;\n  int bands = 6;\n  float v = fract(uv.x * bands + 0.5);\n  fragColor = vec4(vec3(v), 1.0);\n}');
+    assert.ok(b.ok, b.errors.join(' | ')); assert.match(b.code, /uv\.x \* float\(bands\)/); assert.match(b.code, /int bands = 6;/);
+  });
+  it('Kaputte eigene Rauschfunktion wird durch die der App ersetzt (auch fbm mit Oktaven)', async () => {
+    const code = 'float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9, 78.2))) * 43758.5); }\n' +
+      'float noise(vec2 p){ vec2 i = floor(p), f = fract(p);\n  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0))), mix(hash(i + vec2(0.0, 1.0)), hash(i + 1.0), f.x), f.y);\n}\n' +
+      'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.y * 6.0; float v = noise(uv + iTime) * fbm(uv, 4); fragColor = vec4(vec3(v), 1.0); }';
+    const v = await AI.validate.runShader([], code, { sandbox: box });
+    assert.ok(v.ok, v.errors.join(' | ')); assert.ok(v.fixes.includes('eigene Rauschfunktion durch die der App ersetzt'), v.fixes.join());
+    assert.ok(!/float noise\(vec2 p\)\{ vec2 i/.test(v.code));
+  });
+  it('Hilfsfunktion palette verzeiht einen float statt vec3 als letzten Wert', async () => {
+    const v = await AI.validate.runShader([{ id: 'a', label: 'A', type: 'color', default: '#203040' }, { id: 'b', label: 'B', type: 'color', default: '#f0a050' }],
+      'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; vec3 col = palette(uv.x + iTime * 0.1, u_a, u_b, vec3(1.0), 0.0); fragColor = vec4(col, 1.0); }', { sandbox: box });
+    assert.ok(v.ok, v.errors.join(' | '));
+    const l = AI.shader.localizeLog("ERROR: 0:3: 'palette' : no matching overloaded function found", 'x\n// ---- KI-SHADER ----\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(palette(1.0)); }');
+    assert.match(l[0], /the app's helper is palette\(float t, vec3 a, vec3 b, vec3 c, vec3 d\)/);
+  });
+  it('Fehlermeldungen bekommen kurze Lösungshinweise', () => {
+    const src = 'x\n// ---- KI-SHADER ----\nvoid mainImage(out vec4 f, in vec2 c){\n  f = vec4(smoothstep(0, 1, c.x > 1.0));\n}';
+    const l = AI.shader.localizeLog("ERROR: 0:4: 'smoothstep' : no matching overloaded function found\nERROR: 0:4: '+' : wrong operand types - no operation '+' exists that takes a left-hand operand of type 'mediump int'", src);
+    assert.match(l[0], /hint: all arguments of smoothstep\(\) must be float/); assert.match(l[1], /hint: int and float never mix/);
+    const l2 = AI.shader.localizeLog("ERROR: 0:4: 'dot' : no matching overloaded function found\nERROR: 0:4: '+' : wrong operand types - no operation '+' exists that takes a left-hand operand of type 'highp 2-component vector of float' and a right operand of type 'highp 3-component vector of float'", src);
+    assert.match(l2[0], /dot\(\) needs vectors of the same size/); assert.match(l2[1], /a vec2 and a vec3 cannot be combined/); assert.ok(!/float\(i\)/.test(l2.join(' ')));
   });
   it('Rettung greift nur bei Fehlern – lauffähiger Code bleibt unverändert, unrettbarer meldet den Originalfehler', async () => {
     const ok = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; fragColor = vec4(uv, 0.5 + 0.5 * sin(iTime), 1.0); }';
@@ -570,8 +619,12 @@ describe('Shader', () => {
       'void mainImage(out vec4 f, in vec2 c){ f = vec4(vec3(c.x < 1.0 && c.y < 1.0 ? 1.0 : 0.004 * fract(c.x * 0.37)), 1.0); }', { sandbox: box });
     assert.match(v.errors[0], /einfarbig: 100,0 % der Pixel haben dieselbe Farbe \(#040404\)/);
   });
+  it('Blasser Schleier auf Weiß gilt als fast leer', async () => {
+    const v = await AI.validate.runShader([], 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.xy; float b = 0.075 * smoothstep(0.7, 0.0, length(uv - 0.5)); fragColor = vec4(vec3(0.98 - b), 1.0); }', { sandbox: box });
+    assert.equal(v.ok, false); assert.match(v.errors[0], /fast leer: nur 0,0 % der Fläche/);
+  });
   it('Kleine helle Formen auf schwarzem Grund gelten nicht als leer', async () => {
-    const dots = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.y; vec2 g = fract(uv * 6.0) - 0.5;\n  float d = smoothstep(0.035, 0.02, length(g)) * (0.6 + 0.4 * sin(iTime)); fragColor = vec4(vec3(d) * vec3(1.0, 0.8, 0.4), 1.0); }';
+    const dots = 'void mainImage(out vec4 fragColor, in vec2 fragCoord){ vec2 uv = fragCoord / iResolution.y; vec2 g = fract(uv * 6.0) - 0.5;\n  float d = smoothstep(0.1, 0.07, length(g)) * (0.6 + 0.4 * sin(iTime)); fragColor = vec4(vec3(d) * vec3(1.0, 0.8, 0.4), 1.0); }';
     const v = await AI.validate.runShader([], dots, { sandbox: box, aspect: 16 / 9 });
     assert.ok(v.ok, v.errors.join(' | '));
   });

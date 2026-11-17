@@ -79,7 +79,7 @@ CG.ai.validate = (() => {
     const w = 320, h = Math.max(48, Math.round(320 / aspect));
     const base = defaults(params);
     const grids = {};
-    let visible = false, slow = 0, flat = 0, flatColor = '';
+    let visible = false, slow = 0, flat = 0, flatColor = '', content = 0;
     for (const t of [0, 0.37, 0.71, 0.999]) {
       try {
         const r = await sandbox.render({ values: base, t, w, h, seed: seedOf(base), stats: true, timeout: renderMs });
@@ -173,36 +173,36 @@ CG.ai.validate = (() => {
     };
     step('Kompilieren');
     const errors = [], fixes = [];
-    // kompiliert nicht: zuerst mechanische Korrekturen probieren – übernommen wird nur, was danach kompiliert
-    try { await render(base, 0, false, 8); }
-    catch (e) {
-      if (e.errName !== 'GLSLError') return { ok: false, errors: ['Fehler beim Rendern: ' + e.message], warnings, params: P, code, fixes };
-      const firstLog = e.message, origFrag = frag;
-      let saved = null;
-      for (const cand of SH.rescue(code)) {
-        frag = SH.source(P, cand.code);
-        try { await render(base, 0, false, 8); saved = cand; break; } catch (e2) { if (e2.errName !== 'GLSLError') break; }
-      }
-      if (!saved) { frag = origFrag; return { ok: false, errors: ['GLSL-Fehler – ' + SH.localizeLog(firstLog, origFrag).join(' | ')], warnings, params: P, code, fixes }; }
-      code = saved.code; fixes.push(...saved.fixes);
+    // kompiliert nicht: mechanische Korrekturen der App zuerst. Jede wird übernommen, sobald sie Fehler beseitigt;
+    // was danach noch fehlt, geht mit dem korrigierten Code ans Modell (die Zeilennummern passen dazu)
+    const compile = async c => { frag = SH.source(P, c); try { await render(base, 0, false, 8); return null; } catch (e) { if (e.errName !== 'GLSLError') throw e; return { log: e.message, offset: SH.codeLineOffset(frag) }; } };
+    let first;
+    try { first = await compile(code); } catch (e) { return { ok: false, errors: ['Fehler beim Rendern: ' + e.message], warnings, params: P, code, fixes }; }
+    if (first) {
+      let r;
+      try { r = await SH.rescueGreedy(code, compile, first); } catch (e) { r = { code, log: first.log, fixes: [] }; }
+      code = r.code; fixes.push(...r.fixes); frag = SH.source(P, code);
+      if (r.log) return { ok: false, errors: ['GLSL-Fehler – ' + SH.localizeLog(r.log, frag).join(' | ')], warnings, params: P, code, fixes };
     }
     const grids = {};
-    let visible = false, slow = 0, flat = 0, flatColor = '';
+    let visible = false, slow = 0, flat = 0, flatColor = '', content = 0;
     for (const t of [0, 0.37, 0.71, 0.999]) {
       try {
         const r = await render(base, t, true);
         slow = Math.max(slow, r.ms);
         grids[t] = r.stats.grid;
-        // sichtbar, sobald mindestens 0,3 % der Pixel deutlich von der häufigsten Farbe abweichen (auch kleine Lichter auf Schwarz)
-        if (r.stats.flat < 0.997) visible = true;
-        flat = Math.max(flat, r.stats.flat); flatColor = r.stats.modeColor;
+        // sichtbar, sobald sich mindestens 1,5 % der Fläche deutlich (> 10 %) von der Grundfarbe abheben – kleine Lichter auf Schwarz
+        // zählen mit, blasse Schleier auf Weiß nicht
+        if (r.stats.content >= 0.015) visible = true;
+        flat = Math.max(flat, r.stats.flat); flatColor = r.stats.modeColor; content = Math.max(content, r.stats.content);
       } catch (e) {
         if (e.errName === 'GLSLError') errors.push('GLSL-Fehler – ' + SH.localizeLog(e.message, frag).join(' | '));
         else errors.push(e.kind === 'timeout' ? `Der Shader ist viel zu langsam (> ${renderMs} ms für ${w} px). Weniger Schleifendurchläufe/Oktaven.` : 'Fehler beim Rendern: ' + e.message);
         break;
       }
     }
-    if (!errors.length && !visible) errors.push(`Das Bild ist einfarbig: ${(flat * 100).toFixed(1).replace('.', ',')} % der Pixel haben dieselbe Farbe (${flatColor}) – es ist nichts vom Motiv zu sehen. Prüfe Größen, Positionen, Helligkeit und Farben.`);
+    if (!errors.length && !visible && flat < 0.997) errors.push(`Das Bild ist fast leer: nur ${(content * 100).toFixed(1).replace('.', ',')} % der Fläche heben sich sichtbar von der Grundfarbe (${flatColor}) ab. (hint: the motif is too faint, too small or the same color as the background – make shapes larger and clearly contrasting, check the colors and brightness)`);
+    else if (!errors.length && !visible) errors.push(`Das Bild ist einfarbig: ${(flat * 100).toFixed(1).replace('.', ',')} % der Pixel haben dieselbe Farbe (${flatColor}) – es ist nichts vom Motiv zu sehen. (hint: typical causes – coordinates not normalized (use fragCoord / iResolution.xy), a mask or smoothstep that is always 0 or always 1, smoothstep edges in the wrong order, a control whose default switches everything off, or shapes far outside the visible range)`);
     if (!errors.length && slow > 250) errors.push(`Der Shader braucht ${Math.round(slow)} ms für ein kleines Probebild (${w} px) – so ist er in der App kaum benutzbar. Bitte deutlich günstiger rechnen.`);
     else if (!errors.length && slow > 60) warnings.push(`Etwas langsam (${Math.round(slow)} ms bei ${w} px).`);
     if (!errors.length) {

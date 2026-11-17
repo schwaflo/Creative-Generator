@@ -66,11 +66,17 @@ vec3 effect(vec2 fc, vec2 uv0){
     ['snoise', 'vec3', 'float snoise(vec3 p){ return cg_n3(p) * 2.0 - 1.0; }'],
     ['fbm', 'vec2', 'float fbm(vec2 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++){ s += a * cg_n2(p); p = mat2(1.6, 1.2, -1.2, 1.6) * p; a *= 0.5; } return s / 0.96875; }'],
     ['fbm', 'vec3', 'float fbm(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++){ s += a * cg_n3(p); p = p * 2.02 + 7.1; a *= 0.5; } return s / 0.96875; }'],
+    ['fbm', 'vec2', 'float fbm(vec2 p, float oct){ float a = 0.5, s = 0.0, n = 0.0; for (int i = 0; i < 10; i++){ if (float(i) >= oct) break; s += a * cg_n2(p); n += a; p = mat2(1.6, 1.2, -1.2, 1.6) * p; a *= 0.5; } return s / max(n, 1e-4); }\nfloat fbm(vec2 p, int oct){ return fbm(p, float(oct)); }'],
+    ['fbm', 'vec3', 'float fbm(vec3 p, float oct){ float a = 0.5, s = 0.0, n = 0.0; for (int i = 0; i < 10; i++){ if (float(i) >= oct) break; s += a * cg_n3(p); n += a; p = p * 2.02 + 7.1; a *= 0.5; } return s / max(n, 1e-4); }\nfloat fbm(vec3 p, int oct){ return fbm(p, float(oct)); }'],
     ['rot', 'float', 'mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }'],
     ['rotate', 'float', 'mat2 rotate(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }'],
     ['rotate2d', 'float', 'mat2 rotate2d(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }'],
+    ['hash', 'int', 'float hash(int p){ return hash(float(p)); }'],
+    ['noise', 'int', 'float noise(int p){ return cg_n2(vec2(float(p), 0.5)); }'],
     ['smin', 'float', 'float smin(float a, float b, float k){ float h = clamp(0.5 + 0.5 * (b - a) / max(k, 1e-5), 0.0, 1.0); return mix(b, a, h) - k * h * (1.0 - h); }'],
-    ['palette', 'float', 'vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d){ return a + b * cos(6.28318530718 * (c * t + d)); }'],
+    ['palette', 'float', 'vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d){ return a + b * cos(6.28318530718 * (c * t + d)); }\n' +
+      'vec3 palette(float t, vec3 a, vec3 b, vec3 c, float d){ return palette(t, a, b, c, vec3(d)); }\nvec3 palette(float t, vec3 a, vec3 b, vec3 c){ return palette(t, a, b, c, vec3(0.0)); }\n' +
+      'vec3 palette(float t, vec3 a, vec3 b){ return mix(a, b, 0.5 + 0.5 * cos(6.28318530718 * t)); }'],
   ];
   const HELPER_BASE = `float cg_h2(vec2 p){ vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 float cg_h3(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
@@ -83,7 +89,7 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     const c = String(code || '').replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '');
     const used = n => new RegExp('\\b' + n + '\\s*\\(').test(c);
     const own = (n, arg) => new RegExp('\\b\\w+\\s+' + n + '\\s*\\(\\s*(?:in\\s+)?(?:const\\s+)?' + arg + '\\b').test(c) || new RegExp('#\\s*define\\s+' + n + '\\b').test(c);
-    const list = HELPERS.filter(([n, arg]) => used(n) && !own(n, arg)).map(h => h[2]);
+    const list = [...new Set(HELPERS.filter(([n, arg]) => used(n) && !own(n, arg)).map(h => h[2]))];
     return list.length ? HELPER_BASE + '\n' + list.join('\n') : '';
   }
 
@@ -100,6 +106,28 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     const i = src.indexOf(MARK);
     return i < 0 ? 0 : src.slice(0, i).split('\n').length;       // Zeile des Markers; danach beginnt der Code
   }
+  // kurze Lösungshinweise zu typischen Compiler-Meldungen (für das Modell)
+  const BUILTIN = /^'(smoothstep|mix|pow|clamp|step|max|min|mod|sin|cos|tan|fract|floor|ceil|abs|exp|log|sqrt|atan|sign|exp2|log2|inversesqrt)'/;
+  const VECFN = /^'(dot|cross|distance|reflect|normalize|length|faceforward|refract)'/;
+  const HELPER_SIGS = { hash: 'hash(float | vec2 | vec3) -> float', noise: 'noise(float | vec2 | vec3) -> float 0..1', fbm: 'fbm(vec2 | vec3) -> float 0..1',
+    rot: 'rot(float angle) -> mat2', smin: 'smin(float a, float b, float k) -> float', palette: 'palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) -> vec3', snoise: 'snoise(vec2 | vec3) -> float -1..1' };
+  const HINTS = [
+    [/^'(hash|noise|fbm|rot|smin|palette|snoise)' : no matching overloaded function found/, e => `hint: the app's helper is ${HELPER_SIGS[e.match(/^'(\w+)'/)[1]]} – use exactly these argument types (or define your own version above)`],
+    [VECFN, e => `hint: ${e.match(VECFN)[1]}() needs vectors of the same size (vec2 with vec2, vec3 with vec3) – check which variable is a vec2 and which a vec3; convert with vec3(v, 0.0) or v.xy`],
+    [/no matching overloaded function found/, e => BUILTIN.test(e) ? `hint: all arguments of ${e.match(BUILTIN)[1]}() must be float or the same vecN type – write 2.0 not 2, use float(i), no bool` : 'hint: number and types of the arguments must match the declaration, and the function must be defined above its first use'],
+    [/wrong operand types.*\bint\b|wrong operand types.*\bfloat\b.*\bint\b/, 'hint: int and float never mix – write 1.0 instead of 1 or use float(i)'],
+    [/wrong operand types.*component vector.*component vector/, 'hint: vector sizes must match – a vec2 and a vec3 cannot be combined; use vec3(v, 0.0) to extend or v.xy to shorten'],
+    [/wrong operand types/, 'hint: both operands need matching types – float with float, vec3 with vec3 or vec3 with float'],
+    [/cannot convert from|dimension mismatch/, 'hint: both sides need the same type – vec3(x) turns a float into a vec3, .xy shortens a vector'],
+    [/constructor.*too many arguments|not enough data provided for construction/, 'hint: vec2/vec3/vec4(…) needs exactly 2/3/4 float components in total'],
+    [/function return is not matching type/, 'hint: return a value of the declared return type'],
+    [/l-value required/, 'hint: uniforms (u_…, iTime, iResolution) and expressions cannot be assigned – copy into a local variable first'],
+    [/field selection|vector field selection/, 'hint: .x/.y/.z only exist on vectors – a float has no fields'],
+    [/redefinition/, 'hint: this name is already defined – rename one of them'],
+    [/built-in function cannot be redeclared/, 'hint: rename your function, e.g. myMod – built-in names are taken'],
+    [/reserved/, 'hint: this word is reserved in GLSL – rename it'],
+    [/syntax error/, 'hint: look for a missing ; ) or }, a function defined inside another function, or a reserved word (smooth, flat, sample, input, output, filter) used as a name'],
+  ];
   function localizeLog(log, src) {
     const off = codeLineOffset(src), lines = String(src || '').split('\n');
     const seen = new Set();
@@ -118,6 +146,7 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
       const und = m[2].match(/'(\w+)'\s*:\s*undeclared identifier/);
       if (und) hint = /^(u_?res|uresolution|resolution)$/i.test(und[1]) ? ' (heißt iResolution)' : /^(u_?time|time)$/i.test(und[1]) ? ' (heißt iTime)'
         : ' (nicht definiert – vorhanden sind nur iResolution, iTime, iLoop, deine u_<id> und Funktionen, die du selbst schreibst)';
+      if (!hint) hint = HINTS.reduce((h, [re, t]) => h || (re.test(m[2]) ? ` (${typeof t === 'function' ? t(m[2]) : t})` : ''), '');
       return `Zeile ${n}: ${m[2]}${hint}${code ? `  →  ${code}` : ''}`;
     });
   }
@@ -321,6 +350,23 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     }
     return out + code.slice(last);
   }
+  // 6. fragColor bekommt vec3/float statt vec4 -> umwandeln (Überladungen erledigen jeden Typ)
+  function fragColor(code) {
+    if (!/\bfragColor\s*=(?!=)/.test(code) || /\bcg_v4\b/.test(code)) return code;
+    const out = code.replace(/\bfragColor\s*=(?!=)\s*([^;]+);/g, 'fragColor = cg_v4($1);');
+    return 'vec4 cg_v4(vec4 c){ return c; }\nvec4 cg_v4(vec3 c){ return vec4(c, 1.0); }\nvec4 cg_v4(float c){ return vec4(vec3(c), 1.0); }\n' + out;
+  }
+  // 7. reservierte Wörter als eigene Namen (float sample = …, vec3 input …) -> umbenennen
+  const RESERVED = ['smooth', 'flat', 'sample', 'input', 'output', 'filter', 'common', 'partition', 'active', 'half', 'fixed', 'long', 'short', 'double', 'unsigned',
+    'superp', 'resource', 'patch', 'subroutine', 'union', 'enum', 'typedef', 'template', 'this', 'goto', 'inline', 'public', 'static', 'extern', 'external', 'interface', 'cast', 'namespace', 'using', 'sizeof', 'class', 'asm', 'volatile', 'coherent', 'restrict', 'readonly', 'writeonly', 'varying', 'attribute', 'noperspective', 'centroid'];
+  function reserved(code) {
+    const m = mask(code); let out = code;
+    for (const w of RESERVED) {
+      if (!new RegExp('\\b' + TY + '\\s+' + w + '\\b|,\\s*' + w + '\\s*[=;,]').test(m)) continue;     // nur, wenn das Modell den Namen selbst anlegt
+      out = out.replace(new RegExp('\\b' + w + '\\b', 'g'), w + '_');
+    }
+    return out;
+  }
   // Varianten in sinnvoller Reihenfolge (einzeln und kombiniert), ohne Dubletten und ohne unveränderte
   function rescue(code) {
     const steps = { prototypes: ['Prototypen ergänzt', prototypes], hoist: ['verschachtelte Funktionen herausgelöst', hoist], braces: ['Klammern ergänzt', braces],
@@ -336,5 +382,78 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     return out;
   }
 
-  return { PRELUDE, body, source, pre, isToy, tidy, helpers, rescue, _t: { prototypes, hoist, braces, floatLoops, floatLiterals, functions }, uniforms, uniformName, staticCheck, localizeLog, codeLineOffset };
+  /* Korrekturen anhand der Compiler-Meldung (Zeile + Typen sind bekannt):
+     - „cannot convert from float to N-component vector“: rechte Seite in vecN(…) packen (float wird auf alle Kanäle verteilt)
+     - „wrong operand types … int … float“: in dieser Zeile Ganzzahlen zu Kommazahlen, int-Variablen in float(…) */
+  const lineFix = (code, line, f) => { const L = code.split('\n'); if (line < 1 || line > L.length) return code; const n = f(L[line - 1]); if (n === L[line - 1]) return code; L[line - 1] = n; return L.join('\n'); };
+  function toVec(code, errs) {
+    let out = code;
+    for (const e of errs) {
+      const m = e.msg.match(/cannot convert from '(?:\w+ )*float' to '(?:\w+ )*(\d)-component vector of float'/);
+      if (!m) continue;
+      out = lineFix(out, e.line, l => l.replace(/((?:^|[;{(\s])[\w.\[\]]+\s*(?:[-+*/]?=)(?!=))\s*([^;]+);/, (all, lhs, rhs) => /^\s*vec\d\s*\(/.test(rhs) ? all : `${lhs} vec${m[1]}(${rhs.trim()});`)
+                              .replace(/\breturn\s+([^;]+);/, (all, rhs) => /function return/.test(e.msg) ? `return vec${m[1]}(${rhs.trim()});` : all));
+    }
+    return out;
+  }
+  function intMix(code, errs) {
+    const ints = [...new Set([...mask(code).matchAll(/\bint\s+([A-Za-z_]\w*)\s*(?=[=;,)])/g)].map(m => m[1]))];
+    let out = code;
+    for (const e of errs) {
+      if (!/wrong operand types.*\bint\b|no matching overloaded function found/.test(e.msg)) continue;
+      out = lineFix(out, e.line, l => {
+        if (/\bfor\s*\(/.test(l)) return l;
+        let n = floatLiterals(l);
+        for (const v of ints) n = n.replace(new RegExp('(?<![\\w.]|int\\s|float\\()\\b' + v + '\\b(?!\\s*(?:\\+\\+|--|[-+*/%]?=(?!=)|\\[|\\]))', 'g'), `float(${v})`);
+        return n;
+      });
+    }
+    return out;
+  }
+
+  // 8. eigene (kaputte) Rausch-/Zufallsfunktionen des Modells entfernen – die der App springen ein (helpers)
+  const OWN_HELPERS = ['noise', 'snoise', 'fbm', 'hash', 'rand', 'random', 'palette'];
+  function replaceHelpers(code) {
+    const fs = functions(code).filter(f => f.depth === 0 && OWN_HELPERS.includes(f.name));
+    if (!fs.length) return code;
+    let out = code;
+    for (const f of fs.slice().sort((a, b) => b.start - a.start)) out = out.slice(0, f.start) + out.slice(f.end);
+    // auch Prototypen dieser Namen entfernen
+    return out.replace(new RegExp('^[ \\t]*' + TY + '\\s+(?:' + OWN_HELPERS.join('|') + ')\\s*\\([^(){};]*\\)\\s*;[ \\t]*\\n?', 'gm'), '');
+  }
+
+  /* Gierig retten: jede Korrektur wird übernommen, sobald sie Fehler beseitigt – auch wenn noch andere übrig bleiben.
+     compile(code) liefert null (kompiliert) oder { log, offset } (offset = Zeile, ab der der Code des Modells beginnt).
+     Ergebnis: { code, log, fixes } – log null = kompiliert. */
+  async function rescueGreedy(code, compile, first) {
+    const parse = r => r ? String(r.log).split('\n').map(x => x.match(/^(?:ERROR):\s*\d+:(\d+):\s*(.*)$/)).filter(Boolean).map(m => ({ line: +m[1] - r.offset, msg: m[2] })) : [];
+    const count = r => parse(r).length || 1;
+    const first1 = r => parse(r)[0] || { line: 0, msg: '' };
+    const lines = c => c.split('\n').length;
+    const steps = [['Typen in der Fehlerzeile angepasst', toVec], ['Ganzzahlen in der Fehlerzeile', intMix],
+      ['Prototypen ergänzt', prototypes], ['verschachtelte Funktionen herausgelöst', hoist], ['Klammern ergänzt', braces],
+      ['Ganzzahlen als Kommazahlen', floatLiterals], ['Schleifenzähler als Kommazahl', c => floatLiterals(floatLoops(c))], ['Schleifenzähler als Kommazahl', floatLoops],
+      ['fragColor als vec4', fragColor], ['reservierte Namen umbenannt', reserved], ['eigene Rauschfunktion durch die der App ersetzt', replaceHelpers]];
+    let cur = code, res = first === undefined ? await compile(code) : first;
+    const fixes = [];
+    for (let pass = 0; pass < 3 && res; pass++) {
+      let moved = false;
+      for (const [name, f] of steps) {
+        const c2 = f(cur, parse(res));
+        if (c2 === cur) continue;
+        const r2 = await compile(c2);
+        // Fortschritt: kompiliert oder weniger Fehler. Syntaxfehler meldet der Compiler einzeln – dort zählt auch, wenn der erste
+        // Fehler danach weiter hinten liegt (oben eingefügte Zeilen herausgerechnet)
+        const a = first1(res), b = r2 && first1(r2), shift = Math.max(0, lines(c2) - lines(cur));
+        if (!r2 || count(r2) < count(res) || (count(r2) === count(res) && /syntax error/.test(a.msg) && b.line - shift > a.line)) {
+          cur = c2; res = r2; moved = true; if (!fixes.includes(name)) fixes.push(name);
+          if (!res) break;
+        }
+      }
+      if (!moved) break;
+    }
+    return { code: cur, log: res ? res.log : null, fixes };
+  }
+
+  return { PRELUDE, body, source, pre, isToy, tidy, helpers, rescue, rescueGreedy, _t: { prototypes, hoist, braces, floatLoops, floatLiterals, functions, fragColor, reserved, toVec, intMix, replaceHelpers }, uniforms, uniformName, staticCheck, localizeLog, codeLineOffset };
 })();
