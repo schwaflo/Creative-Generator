@@ -6,10 +6,10 @@
    Bei Änderungen am Auftrag: VERSION erhöhen (wird mit jedem Generator gespeichert). */
 CG.ai = CG.ai || {};
 CG.ai.prompt = (() => {
-  const VERSION = 'funktion-v3';
+  const VERSION = 'funktion-v5';
   const SLOT = '{{BILDBESCHREIBUNG}}';             // wird durch die Beschreibung des zweiten Modells ersetzt
 
-  const SYSTEM = 'You are a creative coder. You build visual functions (animated GLSL shaders with their own controls) for a generative design app. You answer in the format the user describes: a TITLE line, a NOTES line, the controls as a json code block and the complete shader as a glsl code block.';
+  const SYSTEM = 'You are a creative coder who writes generative GLSL shaders with their own controls.';
 
   /* Antwortform: freier Text mit zwei Code-Blöcken statt eines JSON-Objekts – Code im JSON-String (alles maskiert,
      Grammatik-Zwang beim Erzeugen) schreiben Modelle messbar schlechter. */
@@ -18,7 +18,7 @@ CG.ai.prompt = (() => {
     return `TITLE: ${a.title || ''}\nNOTES: ${String(a.notes || '').replace(/\s*\n\s*/g, ' ')}\n${F}json\n${JSON.stringify(a.params || [], null, 1)}\n${F}\n${F}glsl\n${String(a.shader || '').trim()}\n${F}`;
   }
 
-  // kurzes, korrektes Beispiel (zeigt Format, Dropdown und Hilfsfunktionen – kein gestalterisches Vorbild)
+  // kurzes, korrektes Beispiel – nur für Tests und Doku, steht nicht im Auftrag (es würde den Stil prägen)
   const EXAMPLE = JSON.stringify({
     title: 'Farbwolken', notes: 'Zwei Farben, verwirbeltes Rauschen; das Dropdown schaltet zwischen Wolken und Streifen.',
     params: [
@@ -39,63 +39,41 @@ CG.ai.prompt = (() => {
       '  fragColor = vec4(col, 1.0);',
       '}'].join('\n') });
 
-  // Das Interface: was die App bereitstellt und wie Regler funktionieren
-  const INTERFACE = `The app is only the interface: it shows your function live, builds the control panel from your parameter list, plays it as a loop and exports images and video. Everything visual is your decision.
+  /* Das Interface – bewusst knapp: nur was das Modell wissen muss, damit die App seine Funktion ausführen kann.
+     Keine Stil- oder Technikvorgaben, keine Regelliste, kein Beispiel (das prägt sonst den Stil).
+     Typische GLSL-Fehler fängt die App selbst ab (shader.tidy / rescueGreedy, Hilfsfunktionen bei Bedarf). */
+  const INTERFACE = `Controls: you decide which controls fit your idea and how many – name them yourself (id in English, label in German). Each one becomes a uniform u_<id> in your shader:
+- slider: {"id", "label", "type": "range", "min", "max", "step", "default"} -> float
+- color: {"id", "label", "type": "color", "default": "#rrggbb"} -> vec3 (rgb 0..1)
+- dropdown: {"id", "label", "type": "select", "options": [ ... ], "default"} -> float = index of the chosen option (0.0, 1.0, …)
+- switch: {"id", "label", "type": "toggle", "default": true or false} -> float (1.0 or 0.0)
+- random seed: {"id", "label", "type": "seed", "default"} -> float (the user rolls it for a new variation)
+Optional "group" sorts controls into sections.
 
-Answer in exactly this format – two lines, then two code blocks:
-TITLE: <a short German name>
-NOTES: <a few sentences – what you build and how>
+The shader is Shadertoy-style GLSL ES 3.0: void mainImage(out vec4 fragColor, in vec2 fragCoord) with iResolution (vec3 – use iResolution.xy with fragCoord), iTime, iLoop (0..1, for seamless loops) and your u_<id> – plus any functions you write yourself. No textures.
+
+Answer like this:
+TITLE: <short German name>
+NOTES: <your idea in a few sentences>
 ${F}json
-[ the list of controls (see below) – you decide which and how many ]
+[ your controls ]
 ${F}
 ${F}glsl
-<the complete shader code>
-${F}
-
-How controls work – every entry in the json list becomes one control in the panel AND one uniform in your shader, named u_<id>:
-- Slider:   {"id": "speed", "label": "Tempo", "type": "range", "min": 0, "max": 2, "step": 0.01, "default": 1}
-            -> uniform float u_speed (the current slider value)
-- Color:    {"id": "ink", "label": "Tinte", "type": "color", "default": "#2ec4b6"}
-            -> uniform vec3 u_ink (rgb, each 0..1)
-- Dropdown: {"id": "mode", "label": "Muster", "type": "select", "options": ["Wellen", "Kreise", "Linien"], "default": "Wellen"}
-            -> uniform float u_mode = index of the chosen option (0.0, 1.0, 2.0 …). Use it like this:
-               if (u_mode < 0.5) { /* Wellen */ } else if (u_mode < 1.5) { /* Kreise */ } else { /* Linien */ }
-- Switch:   {"id": "glow", "label": "Leuchten", "type": "toggle", "default": true}
-            -> uniform float u_glow (1.0 = on, 0.0 = off)
-- Seed:     {"id": "seed", "label": "Seed", "type": "seed", "default": 7}
-            -> uniform float u_seed (0..9999; the user rolls it to get a new random variation)
-- Optional "group": "Form" (any short German name): controls with the same group share one section of the panel. Colors always appear together as a palette.
-- "id": letters, digits and underscore only. "label": German. The app declares the uniforms – do not declare them yourself. Every u_<id> you use in the shader must be in the json list.
-
-The shader – Shadertoy style, GLSL ES 3.0:
-  void mainImage(out vec4 fragColor, in vec2 fragCoord) { … }   plus any helper functions you write yourself.
-Available: iResolution (vec3, size in pixels), iTime (float, seconds), iLoop (float 0..1, position in the loop – use it for seamless loops), and your u_<id> uniforms.
-Not available: textures / iChannel, #version, main().
-
-Helpers you may call without defining them – prefer them over writing your own noise or hash: hash(float | vec2 | vec3) -> float 0..1 · noise(vec2 | vec3) -> smooth float 0..1 · fbm(vec2 | vec3) -> float 0..1 · rot(float angle) -> mat2 · smin(float a, float b, float k) smooth minimum · palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) -> vec3.
-
-GLSL ES is strict – these mistakes break shaders most often, avoid them:
-- Write floats with a decimal point (2.0, not 2). int and float never mix – convert with float(i).
-- Call a function only with the argument types it is declared with, and declare it above the place where it is used.
-- A vec3 is not a float: use .x/.r, length(v) or vec3(x) to convert.
-- The names are fract, mix, mod, atan(y, x) – not frac, lerp, fmod, atan2. Time is iTime, size is iResolution.xy.
-- Global variables must be constant; compute everything that uses uniforms or iTime inside a function.
-
-Example of a correct answer (only to show the format – build something of your own):
-${format(JSON.parse(EXAMPLE))}`;
+<the complete shader>
+${F}`;
 
   // Aufgabe je nach Weg
   function task({ source, wishes }) {
-    const w = (wishes || '').trim();
-    if (source === 'image') return `Task: attached is a reference image. Build a function that recreates it as closely as you can – subject, composition, colors, light, fine detail – as a living, animated image.\nMy wish: ${w || '(none)'}`;
-    if (source === 'description') return `Task: build a function that recreates a reference image as closely as you can, as a living, animated image. You cannot see the image; a vision model described it for you:\n${SLOT}\nMy wish: ${w || '(none)'}`;
-    return `Task: ${w || '(describe here what the function should show)'}`;
+    const w = (wishes || '').trim(), wish = w ? `\nMy wish: ${w}` : '';
+    if (source === 'image') return `Here is a reference image. Turn it into a generative function: an animated shader that captures what makes this image – its forms, composition, colors, light and mood. How you translate it is up to you.${wish}`;
+    if (source === 'description') return `Turn a reference image into a generative function: an animated shader that captures what makes this image – its forms, composition, colors, light and mood. You cannot see the image; a vision model described it:\n${SLOT}${wish}`;
+    return `Build a generative function: an animated shader. ${w || '(describe here what it should show)'}`;
   }
 
   // Der sichtbare, editierbare Auftrag
   function text({ wishes, format, source = 'image' } = {}) {
     const f = format ? `${format.w} × ${format.h} px (${format.w >= format.h ? 'landscape' : 'portrait'})` : 'any';
-    return `${task({ source, wishes })}\nFormat: ${f} – it must work in any size.\n\n${INTERFACE}`;
+    return `${task({ source, wishes })}\nFormat: ${f}.\n\n${INTERFACE}`;
   }
 
   function messages(promptText, imageBase64) {
@@ -120,12 +98,12 @@ Plain text, about 150–250 words, no introduction.`;
 
   // Nächste Runde im selben Gespräch: Fehler beheben · selbst vergleichen (Bild) · Kritik des zweiten Modells (Text)
   function feedback(history, answer, { compareBase64, critique, errors, warnings }) {
-    const again = 'Answer again in the same format: TITLE, NOTES, the controls as json block, the complete shader as glsl block.';
-    const tail = `${warnings && warnings.length ? `\nThe automatic test also noticed:\n${warnings.map(w => '- ' + w).join('\n')}` : ''}\n${again}`;
+    const again = 'Answer again in the same format (TITLE, NOTES, json, glsl).';
+    const notes = warnings && warnings.length ? `\nNoticed while testing: ${warnings.join(' ')}` : '';
     let content;
-    if (errors && errors.length) content = `Your shader does not compile or run yet. The automatic test reports:\n${errors.map(e => '- ' + e).join('\n')}\nFix exactly these errors and keep everything else unchanged. ${again}`;
-    else if (critique) content = `A vision model compared the reference with what your shader renders:\n${critique}\nImprove the function accordingly. Keep everything that already works.${tail}`;
-    else content = `Attached: LEFT = the reference, RIGHT = what your current shader renders. Compare them carefully yourself: what is still different in composition, shapes, colors, light and detail? Write that into "notes", then improve the function. Keep everything that already works.${tail}`;
+    if (errors && errors.length) content = `The shader does not run yet:\n${errors.map(e => '- ' + e).join('\n')}\nFix this. ${again}`;
+    else if (critique) content = `A vision model compared the reference with your result:\n${critique}\nWhat would bring it closer? Improve it.${notes}\n${again}`;
+    else content = `Attached: LEFT the reference, RIGHT what your shader renders now. What would bring it closer? Improve it.${notes}\n${again}`;
     const next = { role: 'user', content };
     if (compareBase64 && !critique && !(errors && errors.length)) next.images = [compareBase64];
     return [...history, { role: 'assistant', content: format(answer) }, next];

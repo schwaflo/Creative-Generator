@@ -77,14 +77,22 @@ CG.ai.pipeline = (() => {
     return text;
   }
 
-  // dieselben ~160 Zeichen mindestens dreimal in der Antwort = Wiederholungsschleife
+  /* Wiederholungsschleife: dieselben ~160 Zeichen mindestens dreimal – oder, mit Zahlen gleichgesetzt, ein 240-Zeichen-Block
+     viermal (hochzählende Wiederholung: c1 = …, c2 = …, c3 = …). Dazu eine Längengrenze: ein Shader braucht keine 24 000 Zeichen. */
+  const MAX_ANSWER = 24000;
   function looping(t) {
+    if (t.length > MAX_ANSWER) return true;
     if (t.length < 1500) return false;
-    const tail = t.slice(-160);
-    if (tail.replace(/\s+/g, '').length < 60) return false;
-    let n = 0, i = -1;
-    while ((i = t.indexOf(tail, i + 1)) !== -1) if (++n >= 3) return true;
-    return false;
+    const test = (s, len, k) => {
+      const tail = s.slice(-len);
+      if (tail.replace(/\s+/g, '').length < len * 0.35) return false;
+      let n = 0, i = -1;
+      while ((i = s.indexOf(tail, i + 1)) !== -1) if (++n >= k) return true;
+      return false;
+    };
+    if (test(t, 160, 3)) return true;
+    const norm = t.replace(/\d+(?:\.\d*)?/g, '#');
+    return norm.length > 3000 && test(norm, 240, 4);
   }
   const anySignal = list => {
     if (AbortSignal.any) return AbortSignal.any(list);
@@ -117,7 +125,7 @@ CG.ai.pipeline = (() => {
       } finally { d.done(); }
       if (looped) {
         const lastTry = --st.fixesLeft < 0;
-        onEvent({ type: 'failed', round, errors: ['Die Antwort hing in einer Wiederholungsschleife und wurde abgebrochen.'], attempt: st.repairs + 1, max: st.maxFixes, last: lastTry });
+        onEvent({ type: 'failed', round, errors: ['Die Antwort hing in einer Wiederholungsschleife oder wurde ungewöhnlich lang und wurde abgebrochen.'], attempt: st.repairs + 1, max: st.maxFixes, last: lastTry });
         if (lastTry) return null;
         st.repairs++; messages = base; fresh = true; fixing = true; lastKey = '';
         continue;

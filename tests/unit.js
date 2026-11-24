@@ -338,19 +338,20 @@ describe('Prompt', () => {
   it('Auftrag erklärt das Interface: Regler, Dropdown (Index), Schalter, Seed, Gruppen, Shader-Einstieg', () => {
     const t = P.text({ wishes: 'die Blops bewegen sich', format: { w: 2480, h: 3508 }, source: 'image' });
     assert.match(t, /die Blops bewegen sich/); assert.match(t, /portrait/);
-    assert.match(t, /"type": "range"/); assert.match(t, /"type": "color"/); assert.match(t, /"type": "toggle"/); assert.match(t, /"type": "seed"/);
-    assert.match(t, /"type": "select", "options": \["Wellen", "Kreise", "Linien"\]/);
-    assert.match(t, /index of the chosen option/); assert.match(t, /if \(u_mode < 0\.5\)/);
+    assert.match(t, /"type": "range"/); assert.match(t, /"type": "color"/); assert.match(t, /"type": "toggle"/); assert.match(t, /"type": "seed"/); assert.match(t, /"type": "select"/);
+    assert.ok(!/"id": "|Tempo|Tinte|Leuchten/.test(t), 'keine fertigen Beispiel-Regler – die übernehmen die Modelle sonst wörtlich');
+    assert.match(t, /iResolution \(vec3 – use iResolution\.xy/);
+    assert.match(t, /index of the chosen option/);
     assert.match(t, /"group"/); assert.match(t, /u_<id>/);
     assert.match(t, /void mainImage\(out vec4 fragColor, in vec2 fragCoord\)/); assert.match(t, /iTime/); assert.match(t, /iLoop/);
     assert.match(P.VERSION, /^funktion-v\d+$/);
   });
   it('Drei Wege: Bild, Beschreibung (Platzhalter), nur Text', () => {
-    assert.match(P.text({ wishes: 'w', source: 'image' }), /attached is a reference image/);
+    assert.match(P.text({ wishes: 'w', source: 'image' }), /Here is a reference image/);
     const d = P.text({ wishes: 'w', source: 'description' });
     assert.ok(d.includes(P.SLOT)); assert.match(d, /You cannot see the image/);
     const t = P.text({ wishes: 'Tintenwolken in Blau', source: 'text' });
-    assert.match(t, /^Task: Tintenwolken in Blau/); assert.ok(!t.includes(P.SLOT)); assert.ok(!/reference image/.test(t));
+    assert.match(t, /^Build a generative function: an animated shader\. Tintenwolken in Blau/); assert.ok(!t.includes(P.SLOT)); assert.ok(!/reference image/.test(t));
     assert.deepEqual(P.messages('T', null)[1].images, undefined);
     assert.deepEqual(P.messages('T', 'IMG')[1].images, ['IMG']);
     assert.deepEqual(P.describeMessages('IMG')[0].images, ['IMG']);
@@ -359,7 +360,7 @@ describe('Prompt', () => {
     const base = P.messages('T', 'IMG'), a = { title: 'X', notes: 'n', params: [], shader: 's' };
     const look = P.feedback(base, a, { compareBase64: 'CMP' });
     assert.match(look[2].content, /^TITLE: X\nNOTES: n\n```json/); assert.match(look[3].content, /same format/);
-    assert.equal(look.length, 4); assert.deepEqual(look[3].images, ['CMP']); assert.match(look[3].content, /LEFT = the reference/);
+    assert.equal(look.length, 4); assert.deepEqual(look[3].images, ['CMP']); assert.match(look[3].content, /LEFT the reference/);
     const err = P.feedback(base, a, { errors: ['Fehler A'], compareBase64: 'CMP' });
     assert.equal(err[3].images, undefined); assert.match(err[3].content, /- Fehler A/);
     const cr = P.feedback(base, a, { critique: 'Stränge zu dick', compareBase64: 'CMP' });
@@ -373,14 +374,15 @@ describe('Prompt', () => {
     assert.deepEqual(P.improveMessages(t, 'SHOT')[1].images, ['SHOT']);
     assert.equal(P.improveMessages(t, null)[1].images, undefined);
   });
-  it('Auftrag nennt Sprachregeln und Hilfsfunktionen und enthält ein kurzes Beispiel', () => {
-    const t = P.text({ wishes: 'x', source: 'text' });
-    assert.match(t, /2\.0, not 2/); assert.match(t, /not frac, lerp/); assert.match(t, /hash\(float \| vec2 \| vec3\)/); assert.match(t, /fbm\(vec2 \| vec3\)/);
-    assert.match(t, /TITLE: Farbwolken/); assert.match(t, /```json\n\[/); assert.match(t, /```glsl\nvoid mainImage/);
+  it('Auftrag ist knapp: keine Regelliste, keine Hilfsfunktions-Liste, kein Beispiel (prägt sonst den Stil)', () => {
+    const t = P.text({ wishes: 'x', source: 'image', format: { w: 1000, h: 1500 } });
+    assert.ok(t.length < 2200, 'Länge ' + t.length);
+    assert.ok(!/Example|GLSL ES is strict|Helpers you may call|Farbwolken|recreate it as closely/.test(t));
+    assert.match(t, /How you translate it is up to you/); assert.match(t, /you decide which controls fit your idea/);
   });
   it('Antwortform: TITLE/NOTES + json-Block + glsl-Block, kein JSON-Zwang', () => {
     const t = P.text({ wishes: 'x', source: 'text' });
-    assert.match(t, /Answer in exactly this format/); assert.match(t, /TITLE: <a short German name>/);
+    assert.match(t, /Answer like this:/); assert.match(t, /TITLE: <short German name>/);
     assert.ok(!/Answer with one JSON object/.test(t)); assert.ok(!/JSON object/.test(P.SYSTEM));
     const a = { title: 'Wolken', notes: 'zwei\nZeilen', params: [{ id: 'a', type: 'range' }], shader: 'void mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }' };
     const back = AI.parse.extractFunction(P.format(a));
@@ -417,6 +419,9 @@ describe('Ablauf', () => {
     assert.equal(L(code + code.slice(0, 400)), false);
     const rep = 'col += vec3(0.1, 0.2, 0.3) * smoothstep(0.0, 1.0, length(uv - vec2(0.5, 0.5))) * sin(iTime * 2.0);\n';
     assert.equal(L(code + rep.repeat(4)), true);
+    const counting = Array.from({ length: 30 }, (_, i) => `    vec3 layer${i} = mix(base, accent, smoothstep(0.${i % 9 + 1}, 0.9, noise(uv * ${i + 2}.0 + vec2(${i}.5, 1.25))));\n`).join('');
+    assert.equal(L(code + counting), true, 'hochzählende Wiederholung');
+    assert.equal(L('x'.repeat(25000)), true, 'Längengrenze');
   });
   it('Unbekannte Fähigkeiten (OpenAI-kompatibel): Bild direkt, außer ein Beschreibungs-Modell ist gewählt', () => {
     PL.setModels([{ name: 'x' }, { name: 'y' }]);
@@ -483,6 +488,7 @@ describe('Shader', () => {
     // int-Anweisungen und Array-Indizes bleiben unverändert
     const L = AI.shader._t.floatLiterals('int n = 3; float a[4]; a[2] = 1; float x = y * 2; for (int i = 0; i < 4; i++) { x += a[i]; } int m = n % 2;');
     assert.equal(L, 'int n = 3; float a[4]; a[2] = 1.0; float x = y * 2.0; for (int i = 0; i < 4; i++) { x += a[i]; } int m = n % 2;');
+    assert.equal(AI.shader._t.floatLiterals('float h = fract(sin(x) * 43758.5453e+2 * 3);'), 'float h = fract(sin(x) * 43758.5453e+2 * 3.0);', 'Exponent bleibt');
   });
   it('Rettung: fragColor mit vec3, reservierte Namen; Teilrettung gibt nur den Restfehler ans Modell', async () => {
     const run = c => AI.validate.runShader([], c, { sandbox: box });
@@ -518,6 +524,15 @@ describe('Shader', () => {
     assert.ok(v.ok, v.errors.join(' | '));
     const l = AI.shader.localizeLog("ERROR: 0:3: 'palette' : no matching overloaded function found", 'x\n// ---- KI-SHADER ----\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(palette(1.0)); }');
     assert.match(l[0], /the app's helper is palette\(float t, vec3 a, vec3 b, vec3 c, vec3 d\)/);
+  });
+  it('Rettung: vec2 und vec3 gemischt (Differenz und Zuweisung)', async () => {
+    const run = c => AI.validate.runShader([], c, { sandbox: box });
+    const a = await run('void mainImage(out vec4 fragColor, in vec2 fragCoord){\n  vec2 uv = fragCoord / iResolution.y;\n  vec3 center = vec3(0.6, 0.5, 0.0);\n  float d = length(uv - center);\n  fragColor = vec4(vec3(smoothstep(0.3, 0.29, d)), 1.0);\n}');
+    assert.ok(a.ok, a.errors.join(' | ')); assert.match(a.code, /length\(uv - center\.xy\)/);
+    const b = await run('void mainImage(out vec4 fragColor, in vec2 fragCoord){\n  vec2 uv = fragCoord / iResolution.xy;\n  vec3 col = uv;\n  fragColor = vec4(col, 1.0);\n}');
+    assert.ok(b.ok, b.errors.join(' | ')); assert.match(b.code, /vec3 col = vec3\(uv, 0\.0\);/);
+    const c = await run('void mainImage(out vec4 fragColor, in vec2 fragCoord){\n  vec2 uv = fragCoord / iResolution;\n  fragColor = vec4(uv, 0.5, 1.0);\n}');
+    assert.ok(c.ok, c.errors.join(' | ')); assert.match(c.code, /fragCoord \/ iResolution\.xy;/);
   });
   it('Fehlermeldungen bekommen kurze Lösungshinweise', () => {
     const src = 'x\n// ---- KI-SHADER ----\nvoid mainImage(out vec4 f, in vec2 c){\n  f = vec4(smoothstep(0, 1, c.x > 1.0));\n}';

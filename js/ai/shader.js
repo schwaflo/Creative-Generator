@@ -344,7 +344,7 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
       }
     }
     let out = '', last = 0;
-    for (const r of m.matchAll(/(?<![\w.])\d+(?![\w.])/g)) {
+    for (const r of m.matchAll(/(?<![\w.])(?<![\d.][eE][+-])\d+(?![\w.])/g)) {          // nicht im Exponenten (1.5e+2)
       if (skip[r.index]) continue;
       out += code.slice(last, r.index) + r[0] + '.0'; last = r.index + r[0].length;
     }
@@ -396,6 +396,37 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     }
     return out;
   }
+  // Vektorgrößen gemischt (vec2 − vec3): in der Fehlerzeile die größeren Variablen kürzen (.xy) bzw. bei Zuweisungen anpassen
+  function vecMix(code, errs) {
+    const m0 = mask(code), dims = new Map();
+    for (const d of m0.matchAll(/\b(float|vec[234])\s+([A-Za-z_]\w*)\s*(?=[=;,)\[])/g)) {
+      const n = d[1] === 'float' ? 1 : +d[1][3], had = dims.get(d[2]);
+      dims.set(d[2], had === undefined || had === n ? n : -1);              // -1 = mehrdeutig (verschiedene Typen)
+    }
+    dims.set('iResolution', 3);                                      // Shadertoy: vec3 – fragCoord / iResolution ist der häufigste Fall
+    const sw = ['', 'x', 'xy', 'xyz'];
+    let out = code;
+    for (const e of errs) {
+      let m = e.msg.match(/wrong operand types.*'(?:\w+ )*(\d)-component vector of float'.*'(?:\w+ )*(\d)-component vector of float'/);
+      if (m) {
+        const big = Math.max(+m[1], +m[2]), small = Math.min(+m[1], +m[2]);
+        if (big === small) continue;
+        out = lineFix(out, e.line, l => l.replace(/(?<![\w.])([A-Za-z_]\w*)(?![\w.(])/g, (all, n, off) => {
+          if (dims.get(n) !== big) return all;
+          if (/^\s*(?:[-+*/]?=(?!=))/.test(l.slice(off + n.length)) && !/[-+*/(,]\s*$/.test(l.slice(0, off))) return all;   // Ziel einer Zuweisung
+          return `${n}.${sw[small]}`;
+        }));
+        continue;
+      }
+      m = e.msg.match(/cannot convert from '(?:\w+ )*(\d)-component vector of float' to '(?:\w+ )*(\d)-component vector of float'/);
+      if (m) {
+        const from = +m[1], to = +m[2];
+        out = lineFix(out, e.line, l => l.replace(/((?:^|[;{(\s])[\w.\[\]]+\s*(?:[-+*/]?=)(?!=))\s*([^;]+);/, (all, lhs, rhs) =>
+          `${lhs} ${from > to ? `(${rhs.trim()}).${sw[to]}` : `vec${to}(${rhs.trim()}${', 0.0'.repeat(to - from - (to === 4 ? 1 : 0))}${to === 4 ? ', 1.0' : ''})`};`));
+      }
+    }
+    return out;
+  }
   function intMix(code, errs) {
     const ints = [...new Set([...mask(code).matchAll(/\bint\s+([A-Za-z_]\w*)\s*(?=[=;,)])/g)].map(m => m[1]))];
     let out = code;
@@ -430,7 +461,7 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     const count = r => parse(r).length || 1;
     const first1 = r => parse(r)[0] || { line: 0, msg: '' };
     const lines = c => c.split('\n').length;
-    const steps = [['Typen in der Fehlerzeile angepasst', toVec], ['Ganzzahlen in der Fehlerzeile', intMix],
+    const steps = [['Typen in der Fehlerzeile angepasst', toVec], ['Vektorgrößen in der Fehlerzeile angepasst', vecMix], ['Ganzzahlen in der Fehlerzeile', intMix],
       ['Prototypen ergänzt', prototypes], ['verschachtelte Funktionen herausgelöst', hoist], ['Klammern ergänzt', braces],
       ['Ganzzahlen als Kommazahlen', floatLiterals], ['Schleifenzähler als Kommazahl', c => floatLiterals(floatLoops(c))], ['Schleifenzähler als Kommazahl', floatLoops],
       ['fragColor als vec4', fragColor], ['reservierte Namen umbenannt', reserved], ['eigene Rauschfunktion durch die der App ersetzt', replaceHelpers]];
@@ -445,7 +476,9 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
         // Fortschritt: kompiliert oder weniger Fehler. Syntaxfehler meldet der Compiler einzeln – dort zählt auch, wenn der erste
         // Fehler danach weiter hinten liegt (oben eingefügte Zeilen herausgerechnet)
         const a = first1(res), b = r2 && first1(r2), shift = Math.max(0, lines(c2) - lines(cur));
-        if (!r2 || count(r2) < count(res) || (count(r2) === count(res) && /syntax error/.test(a.msg) && b.line - shift > a.line)) {
+        // ein neuer Syntaxfehler verdeckt die übrigen Meldungen – das ist kein Fortschritt
+        const newSyntax = r2 && /syntax error/.test(b.msg) && !/syntax error/.test(a.msg);
+        if (!newSyntax && (!r2 || count(r2) < count(res) || (count(r2) === count(res) && /syntax error/.test(a.msg) && b.line - shift > a.line))) {
           cur = c2; res = r2; moved = true; if (!fixes.includes(name)) fixes.push(name);
           if (!res) break;
         }
@@ -455,5 +488,5 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     return { code: cur, log: res ? res.log : null, fixes };
   }
 
-  return { PRELUDE, body, source, pre, isToy, tidy, helpers, rescue, rescueGreedy, _t: { prototypes, hoist, braces, floatLoops, floatLiterals, functions, fragColor, reserved, toVec, intMix, replaceHelpers }, uniforms, uniformName, staticCheck, localizeLog, codeLineOffset };
+  return { PRELUDE, body, source, pre, isToy, tidy, helpers, rescue, rescueGreedy, _t: { prototypes, hoist, braces, floatLoops, floatLiterals, functions, fragColor, reserved, toVec, vecMix, intMix, replaceHelpers }, uniforms, uniformName, staticCheck, localizeLog, codeLineOffset };
 })();

@@ -59,8 +59,10 @@ Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 ### Ablauf
 
 Der Generator ist **nur das Interface**: Die KI baut die Funktion – einen animierten Shader samt eigener Regler.
-Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v3`) erklärt dem Modell genau, wie die App aus seiner Parameterliste
-Regler, Dropdowns, Schalter, Farben und den Seed baut und wie sie im Shader ankommen. Alles Gestalterische entscheidet das Modell.
+Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v5`) ist bewusst knapp: das Bild, die Aufgabe („mach daraus eine generative,
+animierte Funktion – wie, entscheidest du“), die Regler-Typen und wie sie im Shader ankommen, die Antwortform. Keine Stil- oder
+Technikvorgaben, keine Regelliste, kein Beispiel: Fertige Beispiel-Regler haben die Modelle im Test wörtlich übernommen, statt
+eigene zu wählen. Welche Regler es gibt und wie sie heißen, entscheidet das Modell.
 
 **Drei Wege zur Aufgabe** – es funktioniert mit jedem Modell:
 
@@ -91,9 +93,9 @@ Regler, Dropdowns, Schalter, Farben und den Seed baut und wie sie im Shader anko
   zusammen mit dem bereits korrigierten Code und einem kurzen Lösungshinweis je Compiler-Meldung.
 - Gerät ein Modell in eine Wiederholungsschleife (derselbe Abschnitt immer wieder), bricht die App die Antwort ab und
   startet frisch, statt bis zum Token-Limit zu warten.
-- Der Auftrag nennt die typischen GLSL-Stolperfallen und enthält ein kurzes, korrektes Beispiel (nur für Format und Sprache).
-- Die App stellt übliche Hilfsfunktionen bereit, die Modelle oft aufrufen, ohne sie passend zu definieren: `hash`, `noise`, `fbm`
-  (jeweils für mehrere Argumenttypen), `rot`, `smin`, `palette`. Eigene Fassungen des Modells haben Vorrang.
+- Die App ergänzt übliche Hilfsfunktionen, wenn ein Modell sie aufruft, ohne sie (passend) zu definieren: `hash`, `noise`,
+  `fbm` (jeweils für mehrere Argumenttypen), `rot`, `smin`, `palette`. Eigene Fassungen des Modells haben Vorrang. Im Auftrag
+  stehen sie nicht – das Modell soll frei schreiben.
 - Vieles korrigiert die App selbst, ohne nachzufragen: `main()`/`gl_FragColor` → `mainImage`, `u_time`/`u_resolution`/`time`,
   `frac`/`lerp`/`saturate`/`float3`, `float x = 2`, `#version`/`#extension`/`precision`, selbst deklarierte Uniforms, globale
   Variablen mit Uniforms, Umlaute in ids, fehlende Reglergrenzen – und Regler, die im Shader benutzt, aber nicht angelegt wurden.
