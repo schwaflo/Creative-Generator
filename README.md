@@ -74,7 +74,8 @@ Er bleibt nur im Browser dieses Geräts – nie in Generatoren, Designs oder Exp
 ### Ablauf
 
 Der Generator ist **nur das Interface**: Die KI baut die Funktion – einen animierten Shader samt eigener Regler.
-Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v6`) ist bewusst knapp: das Bild, die Aufgabe („schau genau hin – Aufbau,
+Der System-Auftrag erklärt dem Modell, wie die App funktioniert, und dass die Vorgaben der Oberfläche im jeweiligen Auftrag
+immer Vorrang haben; alles andere entscheidet das Modell selbst. Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v7`) ist bewusst knapp: das Bild, die Aufgabe („schau genau hin – Aufbau,
 Vorder-/Hintergrund, Licht, Materialien – und bau etwas, das ein Designer weiter benutzen will“), die Regler-Typen und wie sie im
 Shader ankommen, die Antwortform. Keine Technikvorgaben, keine Regelliste, kein Beispiel: Fertige Beispiel-Regler haben Modelle im
 Test wörtlich übernommen, statt eigene zu wählen. Welche Regler es gibt, wie viele und wie sie heißen, entscheidet das Modell.
