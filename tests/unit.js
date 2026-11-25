@@ -728,6 +728,20 @@ describe('Shader', () => {
     assert.ok(L[0] > 200 && L[1] < 60, 'links Pinsel (rot): ' + [...L]);
     assert.ok(R[1] > 200 && R[0] < 60, 'rechts Bild (grün): ' + [...R]);
   });
+  it('Regler-Wirkung: feine Änderungen (Korn, Unschärfe) zählen, wirkungslose Regler werden gefunden', async () => {
+    const params = AI.schema.validateParams([
+      { id: 'grain', label: 'Korn', type: 'range', min: 0, max: 1, step: 0.01, default: 0 },
+      { id: 'soft', label: 'Weich', type: 'range', min: 0, max: 1, step: 0.01, default: 0 },
+      { id: 'nothing', label: 'Nichts', type: 'range', min: 0, max: 1, step: 0.01, default: 0.5 }]).params;
+    // Korn: mittelwertfreies Rauschen; Weich: Streifenkante wird weicher – beides ändert die Raster-Mittel kaum
+    const code = 'float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }\n' +
+      'void mainImage(out vec4 f, in vec2 c){ float s = sin(c.x * 0.9); float e = 0.02 + u_soft * 0.98; f = vec4(vec3(smoothstep(-e, e, s) * 0.6 + 0.2 + (h(c) - 0.5) * 0.3 * u_grain + 0.0 * u_nothing), 1.0); }';
+    const frag = AI.shader.source(params, code);
+    const render = async (values, t, stats) => { const r = await box.shader({ frag, uniforms: AI.shader.uniforms(params, values), t, w: 160, h: 90, stats }); r.bitmap.close(); return r; };
+    const base = { grain: 0, soft: 0, nothing: 0.5 };
+    const dead = await AI.validate.deadParams(params, base, render);
+    assert.deepEqual(dead.map(p => p.id), ['nothing']);
+  });
   it('Shader aus Zaun/Freitext wird herausgelöst', () => {
     assert.equal(AI.parse.extractShader('void mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }"}'), 'void mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }\n');
     assert.equal(AI.parse.extractShader('vec3 image(vec2 uv, vec2 p, float t) {\\n  return vec3(1.0);\\n}'), 'vec3 image(vec2 uv, vec2 p, float t) {\n  return vec3(1.0);\n}\n');

@@ -104,10 +104,12 @@ CG.ai = CG.ai || {};
       let diff = 0, sum = 0;
       const N = 16, grid = new Array(N * N).fill(0), cnt = new Array(N * N).fill(0), rgb = new Array(N * N * 3).fill(0), hist = new Array(64).fill(0);
       const cols = new Uint32Array(32768);                     // Farben auf 5 Bit je Kanal
+      const luma = new Uint8Array(w * h);                      // Helligkeit je Pixel: feine Änderungen (Schärfe, Korn, kleine Verschiebungen)
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const i = (y * w + x) * 4, l = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / 255;
         if (Math.abs(d[i] - r0) + Math.abs(d[i + 1] - g0) + Math.abs(d[i + 2] - b0) > 12) diff++;
         sum += l;
+        luma[y * w + x] = (l * 255 + 0.5) | 0;
         const gi = Math.min(N - 1, (y * N / h) | 0) * N + Math.min(N - 1, (x * N / w) | 0);
         grid[gi] += l; cnt[gi]++;
         hist[Math.min(63, (l * 64) | 0)]++;
@@ -125,7 +127,7 @@ CG.ai = CG.ai || {};
       for (let i = 0; i < d.length; i += 4) if (Math.max(Math.abs(d[i] - mr), Math.abs(d[i + 1] - mg), Math.abs(d[i + 2] - mb)) > 26) content++;
       return { nonUniform: diff / total, mean: sum / total, spread: q(0.98) - q(0.02), flat: modeN / total, content: content / total, modeColor: '#' + hex(mode >> 10) + hex(mode >> 5) + hex(mode),
         grid: grid.map((v, i) => v / Math.max(1, cnt[i])),
-        rgb: rgb.map((v, i) => v / Math.max(1, cnt[(i / 3) | 0])) };
+        rgb: rgb.map((v, i) => v / Math.max(1, cnt[(i / 3) | 0])), luma };
     }
 
     /* Aufzeichnender 2D-Kontext für den SVG-Export */

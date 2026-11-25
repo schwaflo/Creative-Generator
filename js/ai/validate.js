@@ -78,7 +78,7 @@ CG.ai.validate = (() => {
     step('Probe-Render');
     const w = 320, h = Math.max(48, Math.round(320 / aspect));
     const base = defaults(params);
-    const grids = {};
+    const grids = {}, lumas = {};
     let visible = false, slow = 0, flat = 0, flatColor = '', content = 0;
     for (const t of [0, 0.37, 0.71, 0.999]) {
       try {
@@ -132,9 +132,17 @@ CG.ai.validate = (() => {
     }
     return undefined;
   }
-  // Regler ohne sichtbare Wirkung finden (Farbvergleich auf einem 16×16-Raster)
+  /* Anteil der Pixel, deren Helligkeit sich sichtbar ändert (≥ 6/255). Erfasst, was im Raster-Mittel verschwindet:
+     Schärfe/Unschärfe, Korn, Rauschen, Kantenglättung, kleine Verschiebungen. */
+  function pixelShare(a, b) {
+    if (!a || !b || a.length !== b.length || !a.length) return 0;
+    let n = 0;
+    for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) >= 6) n++;
+    return n / a.length;
+  }
+  // Regler ohne sichtbare Wirkung finden: Farbvergleich auf einem 16×16-Raster und pixelgenau
   async function deadParams(P, base, render) {
-    const ref = (await render(base, 0.37, true)).stats.rgb;
+    const ref = (await render(base, 0.37, true)).stats;
     const dead = [];
     for (const p of P) {
       if (p.type === 'seed') continue;
@@ -142,8 +150,8 @@ CG.ai.validate = (() => {
       if (alt === undefined || alt === p.default) continue;
       const r = await render({ ...base, [p.id]: alt }, 0.37, true);
       let sum = 0, mx = 0;
-      r.stats.rgb.forEach((x, i) => { const a = Math.abs(x - ref[i]); sum += a; if (a > mx) mx = a; });
-      if (sum / ref.length < 0.004 && mx < 0.03) dead.push(p);       // auch kleine Details zählen
+      r.stats.rgb.forEach((x, i) => { const a = Math.abs(x - ref.rgb[i]); sum += a; if (a > mx) mx = a; });
+      if (sum / ref.rgb.length < 0.004 && mx < 0.03 && pixelShare(ref.luma, r.stats.luma) < 0.003) dead.push(p);
     }
     return dead;
   }
@@ -184,13 +192,13 @@ CG.ai.validate = (() => {
       code = r.code; fixes.push(...r.fixes); frag = SH.source(P, code);
       if (r.log) return { ok: false, errors: ['GLSL-Fehler – ' + SH.localizeLog(r.log, frag).join(' | ')], warnings, params: P, code, fixes };
     }
-    const grids = {};
+    const grids = {}, lumas = {};
     let visible = false, slow = 0, flat = 0, flatColor = '', content = 0;
     for (const t of [0, 0.37, 0.71, 0.999]) {
       try {
         const r = await render(base, t, true);
         slow = Math.max(slow, r.ms);
-        grids[t] = r.stats.grid;
+        grids[t] = r.stats.grid; lumas[t] = r.stats.luma;
         // sichtbar, sobald sich mindestens 1,5 % der Fläche deutlich (> 10 %) von der Grundfarbe abheben – kleine Lichter auf Schwarz
         // zählen mit, blasse Schleier auf Weiß nicht
         if (r.stats.content >= 0.015) visible = true;
@@ -207,7 +215,7 @@ CG.ai.validate = (() => {
     else if (!errors.length && slow > 60) warnings.push(`Etwas langsam (${Math.round(slow)} ms bei ${w} px).`);
     if (!errors.length) {
       const m = grids[0].reduce((s, x, i) => s + Math.abs(x - grids[0.37][i]), 0) / grids[0].length;
-      if (m < 0.0005) warnings.push('Keine sichtbare Animation.');
+      if (m < 0.0005 && pixelShare(lumas[0], lumas[0.37]) < 0.003) warnings.push('Keine sichtbare Animation.');
     }
     if (errors.length) return { ok: false, errors, warnings, params: P, code, fixes };
     step('Regler-Test');
