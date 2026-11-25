@@ -193,6 +193,42 @@ describe('client', () => {
   const delta = (content, extra = {}) => ({ choices: [{ delta: { content, ...extra } }] });
   const schema = { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] };
 
+  const aev = (...parts) => parts.map(p => `event: ${p.type}\ndata: ${JSON.stringify(p)}\n\n`).join('');
+  it('Claude: Messages API mit Schlüssel-Header, Bild als base64, System getrennt, adaptives Denken, SSE mit Denk-Teilen', () => withServer({
+    api: 'anthropic', url: 'https://api.anthropic.com', key: 'sk-ant-test',
+    reply: () => ({ type: 'text/event-stream', body: aev({ type: 'message_start', message: { id: 'm1' } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '' } },
+      { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'TITLE: A' } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '\nNOTES: b' } },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 9 } }, { type: 'message_stop' }) }),
+  }, async calls => {
+    let ticks = 0;
+    const r = await AI.client.chat({ model: 'claude-sonnet-5-5', maxTokens: 32000, effort: 'high', messages: [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'Bild', images: ['QUJD'] }] }, { onChunk: () => ticks++ });
+    assert.equal(r.text, 'TITLE: A\nNOTES: b'); assert.equal(ticks, 3); assert.equal(r.stop, 'end_turn');
+    const c = calls[0];
+    assert.equal(c.url, 'https://api.anthropic.com/v1/messages');
+    assert.equal(c.init.headers['x-api-key'], 'sk-ant-test'); assert.equal(c.init.headers['anthropic-version'], '2026-10-21');
+    assert.equal(c.init.headers['anthropic-dangerous-direct-browser-access'], 'true'); assert.equal(c.init.headers.Authorization, undefined);
+    assert.equal(c.body.system, 'SYS'); assert.equal(c.body.messages.length, 1);
+    assert.deepEqual(c.body.messages[0].content[0], { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QUJD' } });
+    assert.deepEqual(c.body.messages[0].content[1], { type: 'text', text: 'Bild' });
+    assert.deepEqual(c.body.thinking, { type: 'adaptive' }); assert.equal(c.body.output_config.effort, 'high');
+    assert.equal(c.body.temperature, undefined, 'keine Sampling-Parameter (400 bei Claude)');
+    assert.equal(c.body.fallbacks, 'default'); assert.equal(c.init.headers['anthropic-beta'], 'server-side-fallback-2026-07-01');
+  }));
+  it('Claude: Ablehnung und fehlender Schlüssel werden verständlich gemeldet', async () => {
+    await withServer({ api: 'anthropic', url: 'https://api.anthropic.com', reply: () => ({ type: 'text/event-stream', body: aev({ type: 'message_delta', delta: { stop_reason: 'refusal' } }) }) }, async () => {
+      const e = await assert.rejects(AI.client.chat({ model: 'claude-sonnet-5-5', messages: [{ role: 'user', content: 'x' }] }));
+      assert.equal(e.code, 'refusal');
+    });
+    await withServer({ api: 'anthropic', url: 'https://api.anthropic.com', reply: () => ({ status: 401, body: JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }) }) }, async () => {
+      const e = await assert.rejects(AI.client.chat({ model: 'claude-sonnet-5-5', messages: [{ role: 'user', content: 'x' }] }));
+      assert.equal(e.code, 'auth'); assert.match(e.message, /Claude-API-Schlüssel/);
+    });
+  });
+
   it('OpenAI: json_schema, Bilder als image_url, Schlüssel, SSE inkl. Denk-Teilen', () => withServer({
     api: 'openai', url: 'http://x:1234', key: 'geheim',
     reply: () => ({ body: sse(delta('', { reasoning: 'hm' }), delta('{"code":'), delta('"a"}')), type: 'text/event-stream' }),
@@ -376,7 +412,7 @@ describe('Prompt', () => {
   });
   it('Auftrag ist knapp: keine Regelliste, keine Hilfsfunktions-Liste, kein Beispiel (prägt sonst den Stil)', () => {
     const t = P.text({ wishes: 'x', source: 'image', format: { w: 1000, h: 1500 } });
-    assert.ok(t.length < 2200, 'Länge ' + t.length);
+    assert.ok(t.length < 2800, 'Länge ' + t.length);
     assert.ok(!/Example|GLSL ES is strict|Helpers you may call|Farbwolken|recreate it as closely/.test(t));
     assert.match(t, /How you translate it is up to you/); assert.match(t, /you decide which controls fit your idea/);
   });

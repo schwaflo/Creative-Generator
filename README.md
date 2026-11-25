@@ -2,7 +2,7 @@
 
 Organische, nahtlos loopende Visuals im Browser (WebGL2) – mit Format-Seite, Sandbox mit Reglern, Bibliothek
 und Export (PNG/JPG in hoher Auflösung, MP4 bis UHD). Funktionen: **Feuer**, **Grounddata**, **Fragment**, **Pencil**
-und beliebig viele **KI-Generatoren**, die die App lokal aus einem Referenzbild erzeugt.
+und beliebig viele **KI-Generatoren**, die Claude (oder ein lokales Modell) aus einem Referenzbild oder einer Beschreibung baut.
 
 ## Start
 
@@ -20,13 +20,28 @@ bzw. nimmt den nächsten freien Port.
 ### So ist die KI verbunden
 
 ```
-Browser (Creative Generator)  ──HTTP──▶  KI-Server auf deinem Rechner (z. B. localhost:11434)
+Browser (Creative Generator)  ──HTTPS──▶  api.anthropic.com   (Standard: Claude)
+                              ──HTTP───▶  localhost:11434     (optional: lokales Modell)
 ```
 
-Es gibt keinen Server dazwischen. Jeder Schritt ist eine Anfrage mit erzwungenem Antwortformat (JSON-Schema) –
-Die Antwort (Beschreibung, Regler, Shader) kommt immer als verwertbares JSON zurück. Die Antwort wird gestreamt (Live-Fortschritt, Abbrechen).
+Es gibt keinen Server dazwischen. Jede Antwort wird gestreamt (Live-Fortschritt, Abbrechen).
 
-**Ollama**
+**Claude (Anthropic) – Standard**
+1. API-Schlüssel anlegen: [console.anthropic.com](https://console.anthropic.com) › API Keys (`sk-ant-…`).
+2. Seite **KI** › Server „Claude (Anthropic)“ › Schlüssel eintragen › „Verbinden“.
+3. Modell wählen: `claude-sonnet-5-5` (Standard, schnell und stark), `claude-opus-5-5` (höchste Qualität),
+   `claude-fable-5-2`, `claude-haiku-5-5` (günstig, für einfache Aufträge). Weitere Modelle des Kontos erscheinen automatisch.
+
+Technik: `POST /v1/messages` mit `stream: true`, Bild als Base64, Auftrag als `system`, adaptives Denken
+(`thinking: {type: "adaptive"}`, Tiefe über `effort`), Prompt-Caching (Reparatur- und Vergleichsrunden lesen den Anfang
+aus dem Cache), `max_tokens` 32 000. Lehnt ein Modell eine Anfrage ab, springt serverseitig ein Ausweichmodell ein
+(`fallbacks`). Der Aufruf direkt aus dem Browser braucht den Header `anthropic-dangerous-direct-browser-access` – das
+heißt nur: Der Schlüssel liegt im Browser. Er bleibt in diesem Browser (localStorage), nie in Generatoren, Designs oder
+Exporten. Nutze am besten einen eigenen Schlüssel mit Ausgabenlimit.
+
+Kosten grob: Ein Generator mit Vergleichsrunde sind 2–4 Anfragen (je ~3 000 Token rein, 3 000–8 000 Token raus inkl. Denken).
+
+**Ollama** (lokal, optional)
 - Modelle: `GET /api/tags` · Anfrage: `POST /api/chat` mit `format` (JSON-Schema), `stream: true`, bei Bedarf `think: false`
 - Antwort: eine JSON-Zeile pro Textstück
 - Speicher: Die App entlädt Modelle selbst (`keep_alive: 0`), damit immer nur eins geladen ist.
@@ -41,15 +56,15 @@ Die Antwort (Beschreibung, Regler, Shader) kommt immer als verwertbares JSON zur
 - Freigabe: LM Studio › Developer › Server starten › **Enable CORS**. Andere Server müssen CORS ebenfalls erlauben.
 - Hinweis: Ollama über `/v1` nutzt nur 4096 Token Kontext – für Ollama besser den Server-Typ „Ollama“ wählen.
 
-**Zugangsschlüssel**: Ist einer eingetragen, geht er als `Authorization: Bearer <schlüssel>` mit. Er bleibt nur im
-Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
+**Zugangsschlüssel**: Ist einer eingetragen, geht er als `x-api-key` (Claude) bzw. `Authorization: Bearer <schlüssel>` mit.
+Er bleibt nur im Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 
-**Von GitHub Pages aus**
+**Lokaler Server von GitHub Pages aus** (für Claude nicht nötig)
 - Eine HTTPS-Seite darf `http://localhost` aufrufen, aber keine unverschlüsselte Adresse eines anderen Rechners – dafür `https://`.
 - Chrome fragt einmal, ob die Seite auf Geräte im lokalen Netzwerk zugreifen darf → „Zulassen“.
 - Safari blockiert solche Verbindungen; Chrome, Edge und Firefox funktionieren.
 
-**Kurz-Checkliste**
+**Kurz-Checkliste lokal**
 1. Server starten und ein Modell laden (`ollama pull gemma4:12b-mlx`).
 2. Seitenadresse freigeben (`OLLAMA_ORIGINS` bzw. „Enable CORS“) – für `localhost` bei Ollama nicht nötig.
 3. Auf der Seite **KI**: Server wählen, Adresse mit Port prüfen, „Verbinden“.
@@ -59,16 +74,16 @@ Browser dieses Geräts – nie in Generatoren, Designs oder Exporten.
 ### Ablauf
 
 Der Generator ist **nur das Interface**: Die KI baut die Funktion – einen animierten Shader samt eigener Regler.
-Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v5`) ist bewusst knapp: das Bild, die Aufgabe („mach daraus eine generative,
-animierte Funktion – wie, entscheidest du“), die Regler-Typen und wie sie im Shader ankommen, die Antwortform. Keine Stil- oder
-Technikvorgaben, keine Regelliste, kein Beispiel: Fertige Beispiel-Regler haben die Modelle im Test wörtlich übernommen, statt
-eigene zu wählen. Welche Regler es gibt und wie sie heißen, entscheidet das Modell.
+Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v6`) ist bewusst knapp: das Bild, die Aufgabe („schau genau hin – Aufbau,
+Vorder-/Hintergrund, Licht, Materialien – und bau etwas, das ein Designer weiter benutzen will“), die Regler-Typen und wie sie im
+Shader ankommen, die Antwortform. Keine Technikvorgaben, keine Regelliste, kein Beispiel: Fertige Beispiel-Regler haben Modelle im
+Test wörtlich übernommen, statt eigene zu wählen. Welche Regler es gibt, wie viele und wie sie heißen, entscheidet das Modell.
 
 **Drei Wege zur Aufgabe** – es funktioniert mit jedem Modell:
 
 | Weg | Wann | Was passiert |
 |---|---|---|
-| Bild | Modell kann Bilder lesen (z. B. `gemma4`) | Das Modell sieht die Referenz selbst |
+| Bild | Modell kann Bilder lesen (alle Claude-Modelle, `gemma4`) | Das Modell sieht die Referenz selbst |
 | Beschreibung | Modell kann keine Bilder lesen, bei „Bild lesen“ ist ein zweites Modell gewählt | Das zweite Modell beschreibt die Referenz als Text; mit „Prompt erst prüfen“ steht die Beschreibung vorher im Prompt |
 | Nur Text | kein Bild | Die Funktion entsteht nur aus dem geschriebenen Auftrag |
 
@@ -107,8 +122,8 @@ eigene zu wählen. Welche Regler es gibt und wie sie heißen, entscheidet das Mo
 (Preset-Zeile) oder auf der Karte in der Bibliothek. Das Modell bekommt die aktuelle Funktion (Regler + Code), den Änderungswunsch
 und, wenn es Bilder lesen kann, ein Bild des aktuellen Ergebnisses. Die vorige Fassung bleibt für „Rückgängig“ erhalten (bis zu zehn).
 
-Es ist immer nur ein Modell geladen; beim Weg „Beschreibung“ wechselt die App zwischen den beiden.
-Die Qualität hängt vollständig vom Modell ab.
+Lokal ist immer nur ein Modell geladen; beim Weg „Beschreibung“ wechselt die App zwischen den beiden.
+Die Qualität hängt vollständig vom Modell ab – mit Claude laufen die Absicherungen oben meist gar nicht erst an.
 
 ### Konfiguration – `config.json` + Seite „KI“
 
@@ -116,14 +131,15 @@ Die Qualität hängt vollständig vom Modell ab.
 
 | Schlüssel | Bedeutung |
 |---|---|
-| `server` | `ollama`, `lmstudio`, `llamacpp`, `jan`, `vllm` oder `openai` (OpenAI-kompatibel) |
-| `url` | Adresse des KI-Servers mit Port |
-| `model` | Modell, das die Funktion baut (exakter Name, siehe `ollama list`) |
+| `server` | `anthropic` (Standard), `ollama`, `lmstudio`, `llamacpp`, `jan`, `vllm` oder `openai` (OpenAI-kompatibel) |
+| `url` | Adresse des KI-Servers (`https://api.anthropic.com` bzw. lokal mit Port) |
+| `model` | Modell, das die Funktion baut (Standard `claude-sonnet-5-5`) |
+| `effort` | nur Claude: Denktiefe `low` / `medium` / `high` (Standard) / `max` |
 | `describeModel` | optional: Modell mit Bildverständnis, das die Referenz beschreibt, wenn `model` keine Bilder lesen kann |
-| `temperature` | Temperatur (bei Reparaturen mindestens 0,6) |
+| `temperature` | Temperatur, nur lokal (Claude-Modelle mit adaptivem Denken nehmen keine) |
 | `numCtx` | Kontextgröße (`num_ctx`, nur Ollama) |
-| `maxTokens` | maximale Antwortlänge (`num_predict` bzw. `max_tokens`) |
-| `think` | Denkmodus (aus = schneller) |
+| `maxTokens` | maximale Antwortlänge (`max_tokens` bzw. `num_predict`; Claude: 32 000 inkl. Denken) |
+| `think` | Denkmodus lokal (aus = schneller); Claude denkt immer adaptiv |
 | `timeouts.generationSec` | Zeitlimit pro Modellaufruf |
 | `timeouts.renderMs` | Zeitlimit pro Bild in der Sandbox (Watchdog gegen Endlosschleifen) |
 | `repairAttempts` | maximale Reparaturversuche |
@@ -182,7 +198,7 @@ mit Zeilennummer im Viewport.
 python3 -m unittest tests/test_server.py -v     # Dateiserver
 ```
 
-- `http://localhost:8765/tests/index.html` – Unit-Tests: Parser, Prompt, Schema, Shader, Sandbox, Prüfung, Client (Ollama/OpenAI, Ausweichstufen, Fehler), Speicher
+- `http://localhost:8765/tests/index.html` – Unit-Tests: Parser, Prompt, Schema, Shader, Sandbox, Prüfung, Client (Claude/Ollama/OpenAI, Ausweichstufen, Fehler), Speicher
 - `http://localhost:8765/tests/e2e.html?run=1` – End-to-End gegen das echte lokale Ollama, über beide Schnittstellen (einige Minuten)
 
 ## Fehlerbehebung
@@ -191,6 +207,9 @@ python3 -m unittest tests/test_server.py -v     # Dateiserver
 |---|---|
 | „Keine Verbindung“ | Server läuft? Adresse/Port prüfen. Andere Seitenadresse als `localhost`: Freigabe (`OLLAMA_ORIGINS` bzw. „Enable CORS“), dann den angezeigten `curl`-Test |
 | „Zugriff verweigert“ / 401 | Zugangsschlüssel eintragen bzw. prüfen |
+| „Claude-API-Schlüssel fehlt oder ist falsch“ | Schlüssel aus console.anthropic.com oben eintragen (beginnt mit `sk-ant-`) |
+| „ausgelastet“ (429/529) | kurz warten und „Nochmal versuchen“; ggf. Ausgabenlimit/Rate-Limit im Konto prüfen |
+| Anfrage abgelehnt | Auftrag umformulieren oder anderes Claude-Modell wählen |
 | Seite auf HTTPS, Server auf anderem Rechner | Adresse muss mit `https://` beginnen |
 | Safari verbindet nicht | Chrome, Edge oder Firefox verwenden |
 | „Modell … ist nicht installiert“ | angezeigten `ollama pull …`-Befehl ausführen oder anderes Modell wählen |

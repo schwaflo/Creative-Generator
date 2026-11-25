@@ -79,9 +79,10 @@ CG.ai.pipeline = (() => {
 
   /* Wiederholungsschleife: dieselben ~160 Zeichen mindestens dreimal – oder, mit Zahlen gleichgesetzt, ein 240-Zeichen-Block
      viermal (hochzählende Wiederholung: c1 = …, c2 = …, c3 = …). Dazu eine Längengrenze: ein Shader braucht keine 24 000 Zeichen. */
-  const MAX_ANSWER = 24000;
+  // große Cloud-Modelle schreiben auch mal einen langen, aufwendigen Shader – lokale Modelle laufen eher aus dem Ruder
+  const maxAnswer = () => CG.ai.settings && CG.ai.settings.api() === 'anthropic' ? 80000 : 24000;
   function looping(t) {
-    if (t.length > MAX_ANSWER) return true;
+    if (t.length > maxAnswer()) return true;
     if (t.length < 1500) return false;
     const test = (s, len, k) => {
       const tail = s.slice(-len);
@@ -117,7 +118,7 @@ CG.ai.pipeline = (() => {
           model: st.model, messages, code: true,                // freie Antwort (kein JSON-Zwang), keine Wiederholungsstrafe
           // Reparatur: mehr Variation, sonst kommt fast dieselbe Antwort zurück
           temperature: fresh ? Math.max(0.8, c.temperature) : fixing ? Math.max(0.6, c.temperature) : c.temperature,
-          numCtx: c.numCtx, maxTokens: c.maxTokens, think: thinkOpt(st.model), noThink: !c.think, keepAlive: '10m',
+          numCtx: c.numCtx, maxTokens: c.maxTokens, effort: c.effort, think: thinkOpt(st.model), noThink: !c.think, keepAlive: '10m',
         }, { signal: both, onChunk: (t, n) => { onEvent({ type: 'tokens', n }); if (n % 48 === 0 && looping(t)) loop.abort(); } });
       } catch (e) {
         if (!loop.signal.aborted || (signal && signal.aborted) || d.signal.aborted) throw e;

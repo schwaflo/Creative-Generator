@@ -102,11 +102,13 @@ CG.aiPage = (() => {
     R.cancel.onclick = () => { if (S.run) S.run.abort(); };
     // Verbindung: Server, Adresse, Schlüssel (nur in diesem Browser)
     const st = AI().settings;
-    R.server.value = st.server().id; R.url.value = st.url(); R.key.value = st.key();
+    R.server.value = st.server().id; R.url.value = st.url(); R.key.value = st.key(); keyHint();
     R.server.addEventListener('change', () => {
       const prev = st.server(), next = st.SERVERS.find(x => x.id === R.server.value);
       const url = (!R.url.value.trim() || R.url.value.trim() === prev.url) ? next.url : R.url.value.trim();
-      st.set({ server: next.id, url }); R.url.value = url;
+      const patch = { server: next.id, url };
+      if (next.models && !next.models.includes(AI().config.model)) patch.model = next.models[0];      // Claude: passendes Modell vorwählen
+      st.set(patch); R.url.value = url; keyHint();
       H.tick(); if (next.url !== 'https://') refreshHealth(true); else R.url.focus();
     });
     R.url.addEventListener('change', () => st.set({ url: R.url.value.trim() }));
@@ -201,8 +203,16 @@ CG.aiPage = (() => {
     if (location.protocol === 'https:' && !local) R.hint.insertAdjacentHTML('beforeend', '<span class="sub">Chrome fragt einmal, ob die Seite auf Geräte im lokalen Netzwerk zugreifen darf – „Zulassen“ wählen.</span>');
   }
 
+  // Schlüsselfeld: bei Claude Pflicht (bleibt nur in diesem Browser), sonst optional
+  function keyHint() { if (R) R.key.placeholder = AI().settings.api() === 'anthropic' ? 'sk-ant-… (nur in diesem Browser)' : 'optional'; }
+
   function fillModels(h) {
-    const cfg = AI().config || {};
+    const cfg = AI().config || {}, srv = AI().settings.server();
+    // Claude: bekannte Modelle zuerst (auch ohne Verbindung wählbar), danach weitere Claude-Modelle des Kontos
+    if (srv.models) {
+      const live = h.models.filter(m => /^claude-/.test(m.name)).map(m => m.name);
+      h = { ...h, models: [...new Set([...srv.models, ...live])].map(n => ({ name: n, capabilities: ['completion', 'vision'] })) };
+    }
     const opts = cur => {
       const names = h.models.map(m => m.name);
       if (cur && !names.includes(cur)) names.unshift(cur);

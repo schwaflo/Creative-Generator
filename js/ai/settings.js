@@ -9,6 +9,7 @@ CG.ai.settings = (() => {
 
   // Bekannte Server: Typ der Schnittstelle + übliche Adresse
   const SERVERS = [
+    { id: 'anthropic', label: 'Claude (Anthropic)', api: 'anthropic', url: 'https://api.anthropic.com', models: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2', 'claude-haiku-5-5'] },
     { id: 'ollama',   label: 'Ollama',      api: 'ollama', url: 'http://localhost:11434' },
     { id: 'lmstudio', label: 'LM Studio',   api: 'openai', url: 'http://localhost:1234' },
     { id: 'llamacpp', label: 'llama.cpp',   api: 'openai', url: 'http://localhost:8080' },
@@ -18,18 +19,19 @@ CG.ai.settings = (() => {
   ];
 
   const DEFAULTS = {
-    server: 'ollama',
-    url: 'http://localhost:11434',
-    model: 'gemma4:12b-mlx',                 // baut die Funktion (jedes Modell; mit Bildverständnis sieht es die Referenz selbst)
+    server: 'anthropic',
+    url: 'https://api.anthropic.com',
+    model: 'claude-sonnet-5-5',              // baut die Funktion (mit Bildverständnis sieht es die Referenz selbst)
     describeModel: '',                       // optional: beschreibt die Referenz, wenn das Modell oben keine Bilder lesen kann
-    temperature: 0.25,                       // niedrig = weniger Flüchtigkeitsfehler im Code
-    numCtx: 12288,
-    maxTokens: 8192,                         // Ollamas MLX-Motor kappt sonst bei ~2048 Token
-    think: false,
+    effort: 'high',                          // Claude: Denkaufwand (low · medium · high · xhigh · max)
+    temperature: 0.25,                       // nur lokale Modelle (Claude bestimmt das selbst)
+    numCtx: 12288,                           // nur Ollama
+    maxTokens: 32000,                        // Antwortlänge (Ollamas MLX-Motor kappt sonst bei ~2048 Token)
+    think: false,                            // nur lokale Modelle
     timeouts: { generationSec: 900, renderMs: 4000 },
     refineRounds: 1,                         // Vergleichsrunden mit der Referenz (0 = aus)
     repairAttempts: 3,
-    maxImageSide: 1024,
+    maxImageSide: 1568,                      // längste Bildseite (Claude liest bis ~1568 px ohne Verkleinerung)
   };
 
   const merge = (a, b) => {

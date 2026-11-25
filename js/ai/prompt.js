@@ -6,10 +6,10 @@
    Bei Änderungen am Auftrag: VERSION erhöhen (wird mit jedem Generator gespeichert). */
 CG.ai = CG.ai || {};
 CG.ai.prompt = (() => {
-  const VERSION = 'funktion-v5';
+  const VERSION = 'funktion-v6';
   const SLOT = '{{BILDBESCHREIBUNG}}';             // wird durch die Beschreibung des zweiten Modells ersetzt
 
-  const SYSTEM = 'You are a creative coder who writes generative GLSL shaders with their own controls.';
+  const SYSTEM = 'You are a world-class creative coder and shader artist. You write generative GLSL shaders with their own controls for a design app.';
 
   /* Antwortform: freier Text mit zwei Code-Blöcken statt eines JSON-Objekts – Code im JSON-String (alles maskiert,
      Grammatik-Zwang beim Erzeugen) schreiben Modelle messbar schlechter. */
@@ -65,7 +65,8 @@ ${F}`;
   // Aufgabe je nach Weg
   function task({ source, wishes }) {
     const w = (wishes || '').trim(), wish = w ? `\nMy wish: ${w}` : '';
-    if (source === 'image') return `Here is a reference image. Turn it into a generative function: an animated shader that captures what makes this image – its forms, composition, colors, light and mood. How you translate it is up to you.${wish}`;
+    if (source === 'image') return `Here is a reference image. Turn it into a generative function: an animated shader that captures what makes this image – its forms, composition, colors, light and mood. How you translate it is up to you.
+Look closely first: what is the structure, what lies in front and behind, where does the light come from, which materials, which details carry the mood? Then build something a designer would keep using – depth, light and detail rather than a flat approximation – with controls that let them explore the space of variations (structure, motion, color). Every control should visibly matter.${wish}`;
     if (source === 'description') return `Turn a reference image into a generative function: an animated shader that captures what makes this image – its forms, composition, colors, light and mood. You cannot see the image; a vision model described it:\n${SLOT}${wish}`;
     return `Build a generative function: an animated shader. ${w || '(describe here what it should show)'}`;
   }

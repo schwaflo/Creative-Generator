@@ -36,7 +36,7 @@ class ServerTest(unittest.TestCase):
         self.assertIn(b'Creative Generator', body)
         self.assertEqual(h.get('Cache-Control'), 'no-cache')
         s, _, body = self.get('/config.json')
-        self.assertIn('visionModel', json.loads(body))
+        self.assertIn('model', json.loads(body))
 
     def test_instance_detection(self):
         self.assertTrue(server.already_running(self.port))

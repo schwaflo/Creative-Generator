@@ -1,17 +1,18 @@
 {
-  "server": "ollama",
-  "url": "http://localhost:11434",
-  "model": "gemma4:12b-mlx",
+  "server": "anthropic",
+  "url": "https://api.anthropic.com",
+  "model": "claude-sonnet-5-5",
   "temperature": 0.25,
   "numCtx": 12288,
-  "maxTokens": 8192,
+  "maxTokens": 32000,
   "think": false,
   "timeouts": {
     "generationSec": 900,
     "renderMs": 4000
   },
   "refineRounds": 1,
-  "maxImageSide": 1024,
+  "maxImageSide": 1568,
   "repairAttempts": 3,
-  "describeModel": ""
+  "describeModel": "",
+  "effort": "high"
 }

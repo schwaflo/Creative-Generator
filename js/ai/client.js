@@ -5,6 +5,9 @@
    OpenAI-kompatibel GET /v1/models · POST /v1/chat/completions (response_format json_schema, stream) · SSE-Antwort
    (LM Studio, llama.cpp, Jan, vLLM, Cloud-Anbieter)
 
+   Anthropic (Claude) GET /v1/models · POST /v1/messages (stream, adaptive Denken, Bilder als base64) · SSE-Antwort
+                     direkt aus dem Browser: Header anthropic-dangerous-direct-browser-access (Schlüssel bleibt im Browser)
+
    Antwortformat wird erzwungen. Kennt ein Server das strenge Format nicht, weicht der Client aus:
    json_schema -> json_object -> Schema nur als Anweisung im Text.
    Ein Zugangsschlüssel geht als „Authorization: Bearer …“ mit. */
@@ -34,9 +37,15 @@ CG.ai.client = (() => {
     return e;
   }
 
+  const ANTHROPIC_VERSION = '2026-10-21';
   function headers(json = true) {
     const h = json ? { 'Content-Type': 'application/json' } : {};
     const k = S().key();
+    if (S().api() === 'anthropic') {
+      Object.assign(h, { 'anthropic-version': ANTHROPIC_VERSION, 'anthropic-dangerous-direct-browser-access': 'true' });
+      if (k) h['x-api-key'] = k;
+      return h;
+    }
     if (k) h.Authorization = 'Bearer ' + k;
     return h;
   }
@@ -57,6 +66,8 @@ CG.ai.client = (() => {
     let msg = '';
     try { const t = await r.text(); try { const j = JSON.parse(t); msg = (j.error && (j.error.message || j.error)) || j.message || t; } catch (e) { msg = t; } } catch (e) { /* leer */ }
     msg = String(msg || 'HTTP ' + r.status).slice(0, 400);
+    if (r.status === 401 && S().api() === 'anthropic') return new AiError('auth', 'Claude-API-Schlüssel fehlt oder ist falsch. Schlüssel oben eintragen (console.anthropic.com).', msg);
+    if (r.status === 429 || r.status === 529) return new AiError('busy', 'Der Dienst ist gerade ausgelastet (' + r.status + '). Bitte gleich nochmal versuchen.', msg);
     if (r.status === 401 || r.status === 403) return new AiError('auth', r.status === 401 ? 'Zugangsschlüssel fehlt oder ist falsch.' : 'Zugriff verweigert (403). Ist die Seitenadresse freigegeben?', msg);
     if ((r.status === 404 || /not found|does not exist|no such model/i.test(msg)) && /model/i.test(msg)) {
       return new AiError('model_missing', S().api() === 'ollama'
@@ -73,9 +84,11 @@ CG.ai.client = (() => {
       const j = await r.json();
       return (j.models || []).map(m => ({ name: m.name, size: m.size, capabilities: m.capabilities || null }));
     }
-    const r = await request('/v1/models');
+    const r = await request('/v1/models' + (S().api() === 'anthropic' ? '?limit=100' : ''));
     if (!r.ok) throw await failure(r);
     const j = await r.json();
+    // Claude-Modelle lesen alle Bilder; „thinking“ = adaptives Denken
+    if (S().api() === 'anthropic') return (j.data || []).map(m => ({ name: m.id, label: m.display_name, capabilities: ['completion', 'vision'] }));
     return (j.data || j.models || []).map(m => ({ name: m.id || m.name, capabilities: null }));
   }
 
@@ -118,7 +131,57 @@ CG.ai.client = (() => {
      cb:   { signal, onChunk(text, tokens) }
      -> { text, tokens } */
   async function chat(opts, cb = {}) {
-    return S().api() === 'ollama' ? chatOllama(opts, cb) : chatOpenAI(opts, cb);
+    const api = S().api();
+    return api === 'ollama' ? chatOllama(opts, cb) : api === 'anthropic' ? chatAnthropic(opts, cb) : chatOpenAI(opts, cb);
+  }
+
+  /* Claude (Messages API). Große Modelle brauchen weder Schema-Zwang noch Sampling-Tricks: freie Antwort, adaptives Denken,
+     Aufwand über output_config.effort. Der Systemtext wird zwischengespeichert (Wiederholungen im selben Gespräch
+     kosten dann nur einen Bruchteil). Lehnt das Modell aus Sicherheitsgründen ab, springt serverseitig ein Ersatzmodell ein. */
+  async function chatAnthropic(o, { signal, onChunk } = {}) {
+    const system = o.messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
+    const messages = o.messages.filter(m => m.role !== 'system').map(m => ({
+      role: m.role,
+      content: m.images && m.images.length
+        ? [...m.images.map(b64 => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } })), { type: 'text', text: m.content }]
+        : m.content,
+    }));
+    const body = { model: o.model, max_tokens: o.maxTokens || 32000, stream: true, messages, cache_control: { type: 'ephemeral' },
+      thinking: { type: 'adaptive' }, output_config: { effort: o.effort || 'high' } };
+    if (system) body.system = system;
+    if (/^claude-(sonnet-5-5|opus-5-5|opus-5|fable-5)/.test(o.model)) body.fallbacks = 'default';
+    let fallbacks = !!body.fallbacks;
+    for (;;) {
+      const b = fallbacks ? body : (({ fallbacks: _, ...rest }) => rest)(body);
+      let r;
+      try {
+        r = await fetch(S().url() + '/v1/messages', { method: 'POST', signal, body: JSON.stringify(b),
+          headers: { ...headers(true), ...(fallbacks ? { 'anthropic-beta': 'server-side-fallback-2026-07-01' } : {}) } });
+      } catch (e) {
+        if (e && (e.name === 'AbortError' || (signal && signal.aborted))) throw (signal && signal.reason) || e;
+        throw netError(S().url());
+      }
+      if (!r.ok) {
+        const err = await failure(r, o.model);
+        if (fallbacks && err.code === 'http' && /fallback|beta/i.test(err.message)) { fallbacks = false; continue; }   // Schlüssel/Konto ohne diese Funktion
+        throw err;
+      }
+      let stop = null;
+      const out = await readStream(r, signal, line => {
+        if (!line.startsWith('data:')) return null;
+        let m; try { m = JSON.parse(line.slice(5).trim()); } catch (e) { return null; }
+        if (m.type === 'error') throw new AiError(m.error && /overloaded/.test(m.error.type) ? 'busy' : 'server', String((m.error && m.error.message) || 'Fehler vom Claude-Server'));
+        if (m.type === 'message_delta' && m.delta) stop = m.delta.stop_reason || stop;
+        if (m.type === 'content_block_delta' && m.delta) {
+          if (m.delta.type === 'text_delta') return { text: m.delta.text, tick: true };
+          if (m.delta.type === 'thinking_delta' || m.delta.type === 'signature_delta') return { text: '', tick: true };
+        }
+        return null;
+      }, onChunk);
+      if (stop === 'refusal') throw new AiError('refusal', 'Das Modell hat diese Anfrage abgelehnt.');
+      out.stop = stop;
+      return out;
+    }
   }
 
   async function chatOllama(o, { signal, onChunk } = {}) {
