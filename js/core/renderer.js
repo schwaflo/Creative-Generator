@@ -87,6 +87,7 @@ CG.Renderer = class {
     gl.uniform1f(loc('uImgAspect'), this.img.aspect);
     gl.uniform1f(loc('uImgTexH'), this.img.h);
     gl.uniform1f(loc('uImgOverlay'), fn.usesImage ? 0 : 1);
+    if (CG.brush) CG.brush.bind(gl, loc);                       // Pinsel-Maske (Einheit 5)
     if (fn.bind) fn.bind(gl, loc, params, phase, this, res);   // funktionseigene Daten (Texturen, Kamera)
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }

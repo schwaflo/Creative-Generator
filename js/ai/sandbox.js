@@ -222,6 +222,24 @@ CG.ai = CG.ai || {};
 
     /* ---------- Shader prüfen und rendern (WebGL2 im Worker) ---------- */
     let glc = null, gl = null, gprog = null, gsrc = '', gloc = {};
+    const inTex = {}, inKey = {};
+    function input(unit, name, bmp, key) {
+      if (!inTex[unit]) inTex[unit] = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, inTex[unit]);
+      if (inKey[unit] !== key) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        inKey[unit] = key;
+      }
+      if (bmp.close) bmp.close();
+      const l = gprog && gl.getUniformLocation(gprog, name); if (l) gl.uniform1i(l, unit);
+      gl.activeTexture(gl.TEXTURE0);
+    }
     function glShader(type, src) {
       const sh = gl.createShader(type);
       gl.shaderSource(sh, src); gl.compileShader(sh);
@@ -261,7 +279,16 @@ CG.ai = CG.ai || {};
       const lo = loc('uOffset'); if (lo) gl.uniform2f(lo, 0, 0);
       f1('uPhase', m.t); f1('uSS', 1); f1('uMotion', 0.6);
       f1('uBright', 1); f1('uContrast', 1); f1('uSat', 1); f1('uTemp', 0); f1('uGrain', 0); f1('uVignette', 0);
-      f1('uImgOn', 0); f1('uImgOverlay', 1);
+      f1('uImgOn', 0); f1('uImgOverlay', 1); f1('uBrushOn', 0);
+      // Eingaben des Nutzers zum Prüfen: Bild (Einheit 0, füllt das Format) und Pinsel-Maske (Einheit 5)
+      if (m.image) {
+        const a = m.image.width / m.image.height, ih = m.image.height, mn = Math.min(w, h);
+        input(0, 'uImg', m.image, m.inputKey + ':img');
+        f1('uImgOn', 1); f1('uImgOverlay', 0); f1('uImgAspect', a); f1('uImgTexH', ih);
+        f1('uImgX', 0); f1('uImgY', 0); f1('uImgRot', 0); f1('uImgOpacity', 1); f1('uImgBlend', 0);
+        f1('uImgScale', Math.max(h / mn, w / mn / a));
+      }
+      if (m.brush) { input(5, 'uBrush', m.brush, m.inputKey + ':brush'); f1('uBrushOn', 1); }
       for (const [n, type, v] of m.uniforms) {
         const l = loc(n); if (!l) continue;
         if (type === 'vec3') gl.uniform3f(l, v[0], v[1], v[2]); else gl.uniform1f(l, v);
@@ -423,8 +450,17 @@ parent.postMessage({ type: 'boot' }, '*');
       return this._call({ type: 'render', p: values, t, w, h, seed, stats }, timeout);
     }
     // Shader rendern (Quelltext wird im Worker kompiliert und zwischengespeichert)
+    // Eingaben für Shader mit iImage()/iBrush(): { image: ImageBitmap, brush: ImageBitmap } (werden nur mitgeschickt, wenn genutzt)
+    setInputs(inputs) { this.inputs = inputs || null; this.inputKey = (this.inputKey || 0) + 1; }
     async shader({ frag, uniforms, t, w, h, stats = false, timeout }) {
-      return this._call({ type: 'shader', vert: CG.glsl.vert, frag, uniforms, t, w, h, stats }, timeout);
+      const msg = { type: 'shader', vert: CG.glsl.vert, frag, uniforms, t, w, h, stats };
+      if (this.inputs) {
+        const uses = CG.ai.shader.inputsOf(String(frag).split('// ---- KI-SHADER ----')[1] || '');
+        if (uses.image && this.inputs.image) msg.image = this.inputs.image;
+        if (uses.brush && this.inputs.brush) msg.brush = this.inputs.brush;
+        msg.inputKey = String(this.inputKey);
+      }
+      return this._call(msg, timeout);
     }
     async svg({ values, t, w, h, seed = 1, timeout }) {
       if (this.loadedCode !== this.code && this.code) await this.load(this.code);

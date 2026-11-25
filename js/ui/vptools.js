@@ -13,8 +13,8 @@ CG.vptools = (() => {
     if (!vp) return;
     const id = CG.panel.openId;
     const g = id ? CG.groupsFor(CG.fn()).find(x => x.id === id) : null;
-    mode = g && g.palette ? { kind: 'color', g } : g && g.vp ? { kind: 'vp', g, vp: g.vp } : null;
-    vp.dataset.tool = mode ? (mode.kind === 'color' ? 'pick' : mode.vp.cursor || 'grab') : '';
+    mode = g && g.palette ? { kind: 'color', g } : g && g.paint ? { kind: 'paint', g } : g && g.vp ? { kind: 'vp', g, vp: g.vp } : null;
+    vp.dataset.tool = mode ? (mode.kind === 'color' ? 'pick' : mode.kind === 'paint' ? 'paint' : mode.vp.cursor || 'grab') : '';
   }
 
   // Wert in den Bereich des Parameters bringen; Winkel mit Rasten bei 0/90/180/270°
@@ -33,6 +33,8 @@ CG.vptools = (() => {
   }
 
   const rect = () => { const r = cv.getBoundingClientRect(); return { r, mn: Math.min(r.width, r.height) }; };
+  // Zeiger -> Format-Koordinaten 0..1 (y nach oben), für den Pinsel
+  const unit = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, 1 - (e.clientY - r.top) / r.height]; };
 
   function init() {
     vp = $('#viewport'); cv = $('#cv');
@@ -42,9 +44,11 @@ CG.vptools = (() => {
       e.preventDefault();
       vp.setPointerCapture(e.pointerId);
       drag = { x: e.clientX, y: e.clientY, P: { ...CG.state.params }, moved: false, last: {} };
+      if (mode.kind === 'paint') { drag.paint = true; CG.brush.begin(...unit(e)); }
     });
     vp.addEventListener('pointermove', e => {
       if (!drag) return;
+      if (drag.paint) { CG.brush.move(...unit(e)); return; }
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       if (!drag.moved && Math.hypot(dx, dy) < 4) return;
       drag.moved = true; vp.classList.add('dragging');
@@ -62,6 +66,7 @@ CG.vptools = (() => {
     const end = e => {
       if (!drag) return;
       const d = drag; drag = null; vp.classList.remove('dragging');
+      if (d.paint) { CG.brush.end(); return; }
       if (!d.moved && e.type === 'pointerup') click(e);
     };
     vp.addEventListener('pointerup', end);

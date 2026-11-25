@@ -85,6 +85,9 @@
 .viewport[data-tool="pick"] #cv { cursor: crosshair; }
 .viewport[data-tool="grab"] #cv { cursor: grab; }
 .viewport[data-tool="move"] #cv { cursor: move; }
+.viewport[data-tool="paint"] #cv { cursor: crosshair; }
+.brush-bar { min-height: 0; padding: 4px 4px 4px 14px; gap: 4px; }
+.brush-bar .brush-hint { flex: 1; font-size: 13px; opacity: .6; }
 .viewport.dragging #cv { cursor: grabbing; }
 .viewport[data-tool] { touch-action: none; }
 .viewport[data-tool=""] { touch-action: auto; }

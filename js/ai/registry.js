@@ -154,8 +154,9 @@ vec3 effect(vec2 fc, vec2 uv){
     const id = 'ai-' + gen.id;
     // Shader: läuft direkt im Renderer der App wie Feuer/Grounddata – Regler sind Uniforms
     if (gen.kind === 'shader') {
+      const uses = CG.ai.shader.inputsOf(gen.code);          // Bild bzw. Pinsel als Eingabe -> Werkzeuge einblenden
       const fn = {
-        id, name: gen.name, ai: true, shader: true, gen,
+        id, name: gen.name, ai: true, shader: true, gen, usesImage: uses.image, usesBrush: uses.brush,
         glsl: CG.ai.shader.body(gen.params, gen.code), pre: CG.ai.shader.pre(gen.code),
         groups: S().toGroups(id, gen.params, true),
         bind: (gl, loc, P) => gl.uniform1f(loc('uLoopSec'), +P.loopLen || 10),   // iTime in Sekunden

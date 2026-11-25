@@ -21,6 +21,9 @@ uniform float uBright, uContrast, uSat, uTemp, uGrain, uVignette;
 uniform sampler2D uImg;
 uniform float uImgOn, uImgAspect, uImgTexH, uImgOverlay;
 uniform float uImgX, uImgY, uImgScale, uImgRot, uImgOpacity, uImgBlend;
+// Pinsel-Maske: vom Nutzer direkt im Bild gemalt (Graustufen, Format-Koordinaten, nur KI-Shader mit iBrush)
+uniform sampler2D uBrush;
+uniform float uBrushOn;
 out vec4 outColor;
 
 /* Bild an Position p (zentriert, Einheit = kürzere Bildseite). lodBias > 0 = unschärfer.

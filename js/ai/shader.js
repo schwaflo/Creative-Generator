@@ -40,7 +40,23 @@ uniform float uLoopSec;
 #define iFrame int(uPhase * uLoopSec * 60.0)
 #define iFrameRate 60.0
 #define iMouse vec4(0.0)
-#define iDate vec4(2026.0, 1.0, 1.0, uPhase * uLoopSec)`;
+#define iDate vec4(2026.0, 1.0, 1.0, uPhase * uLoopSec)
+// Eingaben des Nutzers: eingefügtes Bild (Bild-Ebene, vom Nutzer platziert) und Pinsel-Maske.
+// blur 0..6 (Mip-Stufen) ist auflösungsunabhängig: bezogen auf 512 px der kürzeren Seite – Vorschau und 4K-Export sehen gleich aus.
+float cg_blurLod(float blur){ return blur > 0.0 ? max(blur + log2(min(uRes.x, uRes.y) / 512.0), 0.0) : 0.0; }
+vec4 iImage(vec2 fc, float blur){ vec4 L = layerAt((fc - 0.5 * uRes) / min(uRes.x, uRes.y), cg_blurLod(blur)); return vec4(L.a > 0.001 ? L.rgb / L.a : vec3(0.0), L.a); }
+vec4 iImage(vec2 fc){ return iImage(fc, 0.0); }
+float iBrush(vec2 fc, float blur){
+  if (uBrushOn < 0.5) return 0.0;
+  float lod = log2(max(float(textureSize(uBrush, 0).y) / uRes.y, 1.0)) + cg_blurLod(blur);
+  return textureLod(uBrush, vec2(fc.x / uRes.x, 1.0 - fc.y / uRes.y), lod).r;
+}
+float iBrush(vec2 fc){ return iBrush(fc, 0.0); }`;
+  // Welche Eingaben nutzt der Code des Modells? (Kommentare zählen nicht)
+  const inputsOf = code => {
+    const c = String(code || '').replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '');
+    return { image: /\biImage\s*\(/.test(c), brush: /\biBrush\s*\(/.test(c) };
+  };
   const TOY_EFFECT = `
 ${LIB.map(n => `#define ${n} cg_${n}`).join('\n')}
 vec3 effect(vec2 fc, vec2 uv0){
@@ -168,7 +184,7 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     const c = String(code || '').replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '');
     if (!c.trim()) return ['Das Feld "shader" ist leer.'];
     if (!isToy(c) && !/vec3\s+image\s*\(/.test(c)) e.push('Es fehlt  void mainImage(out vec4 fragColor, in vec2 fragCoord).');
-    if (/\biChannel\d|\b(?:texture|texelFetch|textureLod)\s*\(/.test(c)) e.push('Es gibt keine Texturen/iChannel – alles muss prozedural entstehen.');
+    if (/\biChannel\d|\b(?:texture|texelFetch|textureLod)\s*\(/.test(c)) e.push('Es gibt keine Texturen/iChannel – Bild und Pinsel des Nutzers kommen über iImage(fragCoord) und iBrush(fragCoord), alles andere entsteht prozedural.');
     if (/^\s*#\s*version/m.test(c)) e.push('Keine #version-Zeile – die App setzt sie selbst.');
     if (/\buniform\s+\w+\s+u_/.test(c)) e.push('Die Regler-Uniforms (u_…) nicht selbst deklarieren – die App erzeugt sie.');
     if (/\bvoid\s+main\s*\(/.test(c)) e.push('Keine main()-Funktion – nur mainImage() und eigene Funktionen.');
@@ -488,5 +504,5 @@ float cg_n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     return { code: cur, log: res ? res.log : null, fixes };
   }
 
-  return { PRELUDE, body, source, pre, isToy, tidy, helpers, rescue, rescueGreedy, _t: { prototypes, hoist, braces, floatLoops, floatLiterals, functions, fragColor, reserved, toVec, vecMix, intMix, replaceHelpers }, uniforms, uniformName, staticCheck, localizeLog, codeLineOffset };
+  return { PRELUDE, body, source, pre, isToy, tidy, helpers, rescue, rescueGreedy, _t: { prototypes, hoist, braces, floatLoops, floatLiterals, functions, fragColor, reserved, toVec, vecMix, intMix, replaceHelpers }, uniforms, uniformName, inputsOf, staticCheck, localizeLog, codeLineOffset };
 })();

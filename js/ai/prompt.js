@@ -6,7 +6,7 @@
    Bei Änderungen am Auftrag: VERSION erhöhen (wird mit jedem Generator gespeichert). */
 CG.ai = CG.ai || {};
 CG.ai.prompt = (() => {
-  const VERSION = 'funktion-v7';
+  const VERSION = 'funktion-v8';
   const SLOT = '{{BILDBESCHREIBUNG}}';             // wird durch die Beschreibung des zweiten Modells ersetzt
 
   /* System-Auftrag: wie die App funktioniert und wie das Modell arbeitet. Die konkreten Vorgaben (Antwortform, Reglertypen,
@@ -66,6 +66,10 @@ Optional "group" sorts controls into sections.
 
 The shader is Shadertoy-style GLSL ES 3.0: void mainImage(out vec4 fragColor, in vec2 fragCoord) with iResolution (vec3 – use iResolution.xy with fragCoord), iTime, iLoop (0..1, for seamless loops) and your u_<id> – plus any functions you write yourself. No textures.
 
+Inputs from the user – use them only if your function needs them; the app then shows the matching tool:
+- vec4 iImage(vec2 fragCoord) – the user's own picture, which they insert and place on the canvas: rgb, a = 1 where the picture is, 0 elsewhere (and everywhere until they insert one). iImage(fragCoord, blur) is softer (blur 0 … 6).
+- float iBrush(vec2 fragCoord) – what the user paints directly on the canvas with a brush, 0..1 (0 everywhere until they paint). iBrush(fragCoord, blur) is softer.
+
 Answer like this:
 TITLE: <short German name>
 NOTES: <your idea in a few sentences>
@@ -79,9 +83,9 @@ ${F}`;
   // Aufgabe je nach Weg
   function task({ source, wishes }) {
     const w = (wishes || '').trim(), wish = w ? `\nMy wish: ${w}` : '';
-    if (source === 'image') return `Here is a reference image. Turn it into a generative function: an animated shader that captures what makes this image – its forms, composition, colors, light and mood. How you translate it is up to you.
-Look closely first: what is the structure, what lies in front and behind, where does the light come from, which materials, which details carry the mood? Then build something a designer would keep using – depth, light and detail rather than a flat approximation – with controls that let them explore the space of variations (structure, motion, color). Every control should visibly matter.${wish}`;
-    if (source === 'description') return `Turn a reference image into a generative function: an animated shader that captures what makes this image – its forms, composition, colors, light and mood. You cannot see the image; a vision model described it:\n${SLOT}${wish}`;
+    if (source === 'image') return `Here is a reference image. It shows what I want – maybe a look or a scene, maybe the result of a tool or technique applied to my own pictures. Work out which function produced it – a 2D pattern, a 3D scene, an effect on a picture I bring in, something I paint … – and build that function, not a copy of this one picture.
+Look closely first: what is the structure, what lies in front and behind, where does the light come from, which materials, which details carry the look? Then build something a designer would keep using, with controls that let them explore the space of variations. Every control should visibly matter.${wish}`;
+    if (source === 'description') return `A reference image shows what I want – maybe a look or a scene, maybe the result of a tool or technique applied to my own pictures. Work out which function produced it and build that function, not a copy of this one picture. You cannot see the image; a vision model described it:\n${SLOT}${wish}`;
     return `Build a generative function: an animated shader. ${w || '(describe here what it should show)'}`;
   }
 
@@ -104,6 +108,7 @@ Look closely first: what is the structure, what lies in front and behind, where 
 - colors as hex values, gradients
 - materials and surface (transparent, glossy, grainy, soft …), light direction, shadows, depth of field
 - fine detail and texture, mood
+- what kind of thing it is: a 2D pattern, a 3D scene, or an effect/technique applied to a photo (collage, painted mask, cut-out …)
 Plain text, about 150–250 words, no introduction.`;
   const describeMessages = imageBase64 => [{ role: 'user', content: DESCRIBE, images: [imageBase64] }];
 
@@ -118,7 +123,11 @@ Plain text, about 150–250 words, no introduction.`;
     let content;
     if (errors && errors.length) content = `The shader does not run yet:\n${errors.map(e => '- ' + e).join('\n')}\nFix this. ${again}`;
     else if (critique) content = `A vision model compared the reference with your result:\n${critique}\nWhat would bring it closer? Improve it.${notes}\n${again}`;
-    else content = `Attached: LEFT the reference, RIGHT what your shader renders now. What would bring it closer? Improve it.${notes}\n${again}`;
+    else {
+      const u = CG.ai.shader ? CG.ai.shader.inputsOf(answer.shader) : {};
+      const ran = u.image || u.brush ? `\nYour function ran with ${[u.image && 'the reference as iImage', u.brush && 'a test stroke (an S-curve) as iBrush'].filter(Boolean).join(' and ')}.` : '';
+      content = `Attached: LEFT the reference, RIGHT what your shader renders now.${ran} What would bring it closer? Improve it.${notes}\n${again}`;
+    }
     const next = { role: 'user', content };
     if (compareBase64 && !critique && !(errors && errors.length)) next.images = [compareBase64];
     return [...history, { role: 'assistant', content: format(answer) }, next];

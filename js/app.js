@@ -13,6 +13,7 @@
     { ...CG.shared.anim, params: fn.ai ? CG.shared.anim.params.filter(p => p.key === 'loopLen')
                                        : [...CG.shared.anim.params, ...(fn.animParams || [])] },
     CG.shared.image,
+    ...(fn.usesBrush ? [CG.shared.brush] : []),
     ...fn.groups,
     CG.shared.finish,
   ];
@@ -49,7 +50,7 @@
     if (id === CG.state.fn) return;
     // Loop-Dauer und Bild-Ebene bleiben beim Funktionswechsel erhalten
     const keep = { loopLen: CG.state.params.loopLen };
-    for (const k in CG.state.params) if (k.startsWith('img')) keep[k] = CG.state.params[k];
+    for (const k in CG.state.params) if (k.startsWith('img') || k.startsWith('brush')) keep[k] = CG.state.params[k];
     CG.state.fn = id;
     const fn = CG.fn();
     CG.state.params = { ...CG.defaults(fn), ...keep };

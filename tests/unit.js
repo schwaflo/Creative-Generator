@@ -412,9 +412,11 @@ describe('Prompt', () => {
   });
   it('Auftrag ist knapp: keine Regelliste, keine Hilfsfunktions-Liste, kein Beispiel (prägt sonst den Stil)', () => {
     const t = P.text({ wishes: 'x', source: 'image', format: { w: 1000, h: 1500 } });
-    assert.ok(t.length < 2800, 'Länge ' + t.length);
+    assert.ok(t.length < 3600, 'Länge ' + t.length);
     assert.ok(!/Example|GLSL ES is strict|Helpers you may call|Farbwolken|recreate it as closely/.test(t));
-    assert.match(t, /How you translate it is up to you/); assert.match(t, /you decide which controls fit your idea/);
+    assert.match(t, /Work out which function produced it/); assert.match(t, /not a copy of this one picture/);
+    assert.match(t, /you decide which controls fit your idea/);
+    assert.match(t, /vec4 iImage\(vec2 fragCoord\)/); assert.match(t, /float iBrush\(vec2 fragCoord\)/);
   });
   it('Antwortform: TITLE/NOTES + json-Block + glsl-Block, kein JSON-Zwang', () => {
     const t = P.text({ wishes: 'x', source: 'text' });
@@ -706,6 +708,25 @@ describe('Shader', () => {
     assert.ok(r.stats.nonUniform > 0.3);
     const g = AI.schema.toGroups('ai-x', params, true).flatMap(x => x.params);
     assert.equal(g.find(p => p.genId === 'mode').u, 'u_mode'); assert.equal(g.find(p => p.genId === 'mode').map('B'), 1);
+  });
+  it('Eingaben des Nutzers: iImage() und iBrush() lesen Bild und Pinsel, werden erkannt und nur bei Bedarf mitgeschickt', async () => {
+    const code = 'void mainImage(out vec4 f, in vec2 c){ vec4 im = iImage(c); float b = iBrush(c, 1.0); f = vec4(mix(vec3(0.0), im.rgb, im.a) * (1.0 - b) + vec3(b, 0.0, 0.0), 1.0); }';
+    assert.deepEqual(AI.shader.inputsOf(code), { image: true, brush: true });
+    assert.deepEqual(AI.shader.inputsOf('// iImage(c)\nvoid mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }'), { image: false, brush: false });
+    assert.equal(AI.shader.staticCheck(code).length, 0);
+    const img = new OffscreenCanvas(16, 16), ig = img.getContext('2d'); ig.fillStyle = '#00ff00'; ig.fillRect(0, 0, 16, 16);
+    const br = new OffscreenCanvas(16, 16), bg = br.getContext('2d'); bg.fillStyle = '#000'; bg.fillRect(0, 0, 16, 16); bg.fillStyle = '#fff'; bg.fillRect(0, 0, 8, 16);
+    const frag = AI.shader.source([], code);
+    const plain = await box.shader({ frag, uniforms: AI.shader.uniforms([], {}), t: 0, w: 16, h: 16, stats: true });
+    plain.bitmap.close();
+    assert.ok(plain.stats.rgb.every(v => v < 0.02), 'ohne Eingaben schwarz');
+    box.setInputs({ image: await createImageBitmap(img), brush: await createImageBitmap(br) });
+    const r = await box.shader({ frag, uniforms: AI.shader.uniforms([], {}), t: 0, w: 16, h: 16 });
+    const c = new OffscreenCanvas(16, 16).getContext('2d'); c.drawImage(r.bitmap, 0, 0); r.bitmap.close();
+    const L = c.getImageData(2, 8, 1, 1).data, R = c.getImageData(13, 8, 1, 1).data;
+    box.setInputs(null);
+    assert.ok(L[0] > 200 && L[1] < 60, 'links Pinsel (rot): ' + [...L]);
+    assert.ok(R[1] > 200 && R[0] < 60, 'rechts Bild (grün): ' + [...R]);
   });
   it('Shader aus Zaun/Freitext wird herausgelöst', () => {
     assert.equal(AI.parse.extractShader('void mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }"}'), 'void mainImage(out vec4 f, in vec2 c){ f = vec4(1.0); }\n');

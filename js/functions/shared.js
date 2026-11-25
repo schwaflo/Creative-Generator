@@ -30,6 +30,16 @@ CG.shared = {
         showIf: s => !!s.imgId && !CG.fn().usesImage },
     ],
   },
+  // Pinsel: Maske, die der Nutzer direkt im Bild malt – nur bei KI-Shadern, die iBrush() lesen
+  brush: {
+    id: 'brush', title: 'Pinsel', paint: true, pre: body => CG.brush.buildPanel(body),
+    params: [
+      { key: 'brush', hidden: true, def: [], keep: true },
+      { key: 'brushMode', type: 'segment', label: 'Werkzeug', def: 0, keep: true,
+        options: [{ v: 0, label: 'Malen' }, { v: 1, label: 'Radieren' }] },
+      { key: 'brushSize', label: 'Pinselgröße', min: 0.005, max: 0.25, step: 0.001, def: 0.05, keep: true },
+    ],
+  },
   finish: {
     id: 'finish', title: 'Finish',
     params: [

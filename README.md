@@ -75,10 +75,11 @@ Er bleibt nur im Browser dieses Geräts – nie in Generatoren, Designs oder Exp
 
 Der Generator ist **nur das Interface**: Die KI baut die Funktion – einen animierten Shader samt eigener Regler.
 Der System-Auftrag erklärt dem Modell, wie die App funktioniert, und dass die Vorgaben der Oberfläche im jeweiligen Auftrag
-immer Vorrang haben; alles andere entscheidet das Modell selbst. Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v7`) ist bewusst knapp: das Bild, die Aufgabe („schau genau hin – Aufbau,
-Vorder-/Hintergrund, Licht, Materialien – und bau etwas, das ein Designer weiter benutzen will“), die Regler-Typen und wie sie im
-Shader ankommen, die Antwortform. Keine Technikvorgaben, keine Regelliste, kein Beispiel: Fertige Beispiel-Regler haben Modelle im
-Test wörtlich übernommen, statt eigene zu wählen. Welche Regler es gibt, wie viele und wie sie heißen, entscheidet das Modell.
+immer Vorrang haben; alles andere entscheidet das Modell selbst. Der Auftrag (`js/ai/prompt.js`, aktuell `funktion-v8`) ist bewusst knapp:
+das Bild und die Aufgabe, **die Funktion hinter dem Bild** zu erkennen und zu bauen – nicht das eine Bild abzumalen. Eine Vorlage kann
+ein Look sein, eine 3D-Szene oder das Ergebnis eines Werkzeugs auf einem eigenen Foto (z. B. „mit dem Pinsel in Formen umwandeln“).
+Dazu die Regler-Typen, die Eingaben (Bild, Pinsel) und die Antwortform. Keine Technikvorgaben, keine Regelliste, kein Beispiel:
+Fertige Beispiel-Regler haben Modelle im Test wörtlich übernommen, statt eigene zu wählen. Welche Regler es gibt, wie viele und wie sie heißen, entscheidet das Modell.
 
 **Drei Wege zur Aufgabe** – es funktioniert mit jedem Modell:
 
@@ -175,7 +176,20 @@ Jeder Eintrag wird ein Regler im Panel **und** eine Uniform `u_<id>` im Shader:
 | `seed` | Seed mit Würfel | `float` 0..9999 |
 
 `group` fasst Regler zu einem Abschnitt zusammen. Vorhanden im Shader: `iResolution`, `iTime` (Sekunden), `iLoop` (0..1).
-Nicht vorhanden: Texturen/`iChannel`, `#version`, `main()`. Ältere Generatoren (`vec3 image(uv, p, t)`, Canvas 2D) laufen weiter.
+
+**Eingaben des Nutzers** – das Modell nutzt sie nur, wenn seine Funktion sie braucht; die App blendet dann das passende Werkzeug ein:
+
+| Eingabe | Was | Werkzeug in der Sandbox |
+|---|---|---|
+| `vec4 iImage(vec2 fragCoord)` | eingefügtes Bild an dieser Stelle: `rgb`, `a` = 1 im Bild, 0 außerhalb bzw. ohne Bild | Gruppe **Bild**: Hochladen, im Viewport verschieben/skalieren/drehen (kein Überlagern mehr – das Bild ist Eingabe) |
+| `float iBrush(vec2 fragCoord)` | gemalte Maske 0..1 | Gruppe **Pinsel**: direkt im Viewport malen, Malen/Radieren, Pinselgröße, Rückgängig, Leeren |
+
+Beide gibt es auch weichgezeichnet: `iImage(fragCoord, blur)`, `iBrush(fragCoord, blur)` mit `blur` 0…6 – auflösungsunabhängig
+(bezogen auf 512 px), Vorschau und 4K-Export sehen gleich aus. Die Pinselstriche liegen als Daten im Zustand (Format-Koordinaten)
+und werden zu einer Masken-Textur gerastert. In der Prüfung und der Vergleichsrunde läuft die Funktion mit der Referenz als Bild
+(ohne Referenz: Testbild) und einem geschwungenen Test-Pinselstrich – das Modell sieht also, was sein Werkzeug aus der Vorlage macht.
+
+Nicht vorhanden: weitere Texturen/`iChannel`, `#version`, `main()`. Ältere Generatoren (`vec3 image(uv, p, t)`, Canvas 2D) laufen weiter.
 
 ### Sicherheit
 

@@ -170,6 +170,7 @@ CG.ai.pipeline = (() => {
     await C().ensureOnly(model);
     const base = P.messages(text, pl.source === 'image' ? reference : null);
     const box = new CG.ai.Sandbox({ timeout: c.timeouts.renderMs });
+    box.setInputs(await testInputs(reference));          // für Funktionen mit iImage()/iBrush(): Referenz als Bild, Test-Pinselstrich
     // Vergleichsrunden nur mit Referenz (selbst per Bild oder als Text vom zweiten Modell)
     const rounds = 1 + (pl.source === 'text' ? 0 : Math.max(0, c.refineRounds | 0));
     const maxFixes = Math.max(1, c.repairAttempts | 0);
@@ -212,6 +213,7 @@ CG.ai.pipeline = (() => {
     if (!(request || '').trim()) throw fail('input', 'Bitte schreiben, was sich ändern soll.');
     await C().ensureOnly(model);
     const box = new CG.ai.Sandbox({ timeout: c.timeouts.renderMs });
+    box.setInputs(await testInputs(null));
     const maxFixes = Math.max(1, c.repairAttempts | 0);
     const st = { model, box, title: gen.name, repairs: 0, fixesLeft: maxFixes, maxFixes, hasBest: false, improve: true };
     try {
@@ -228,6 +230,29 @@ CG.ai.pipeline = (() => {
       box.destroy();
       await C().unload(model);
     }
+  }
+
+  /* Eingaben zum Prüfen von Funktionen, die mit dem Bild oder Pinsel des Nutzers arbeiten:
+     die Referenz (sonst ein Testbild mit Himmel, Horizont und Formen) und ein geschwungener Test-Pinselstrich.
+     Das Bild wird wie in der Bild-Ebene (js/ui/layer.js) gespiegelt hochgeladen, die Pinsel-Maske nicht. */
+  async function testInputs(reference) {
+    let image = null;
+    if (reference) { try { image = await createImageBitmap(await (await fetch('data:image/jpeg;base64,' + reference)).blob(), { imageOrientation: 'flipY' }); } catch (e) { image = null; } }
+    if (!image) {
+      const c = new OffscreenCanvas(1024, 768), g = c.getContext('2d');
+      const sky = g.createLinearGradient(0, 0, 0, 768); sky.addColorStop(0, '#7fa8c9'); sky.addColorStop(0.55, '#e9dcc4'); sky.addColorStop(1, '#6d7a4a');
+      g.fillStyle = sky; g.fillRect(0, 0, 1024, 768);
+      g.fillStyle = '#f4c95d'; g.beginPath(); g.arc(760, 220, 90, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#2f3b2f'; g.beginPath(); g.moveTo(0, 560); g.bezierCurveTo(300, 430, 600, 620, 1024, 500); g.lineTo(1024, 768); g.lineTo(0, 768); g.fill();
+      g.fillStyle = '#b5523b'; g.beginPath(); g.ellipse(330, 420, 120, 190, -0.2, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#efe7da'; g.beginPath(); g.ellipse(330, 260, 70, 80, 0, 0, Math.PI * 2); g.fill();
+      image = await createImageBitmap(c, { imageOrientation: 'flipY' });
+    }
+    const b = new OffscreenCanvas(1024, 1024), bg = b.getContext('2d');
+    bg.fillStyle = '#000'; bg.fillRect(0, 0, 1024, 1024);
+    bg.strokeStyle = '#fff'; bg.lineWidth = 120; bg.lineCap = 'round'; bg.lineJoin = 'round';
+    bg.beginPath(); bg.moveTo(140, 960); bg.bezierCurveTo(1100, 760, -80, 380, 860, 110); bg.stroke();
+    return { image, brush: await createImageBitmap(b) };
   }
 
   async function renderBitmap(box, gen, aspect, h, t = 0.25) {
